@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>上下文素材</title>
+<style>
+:root{color-scheme:light dark;--paper:#f7f8fb;--surface:#fff;--ink:#182336;--muted:#536581;--line:#dbe3ef;--accent:#315cc9;--tint:#eaf0ff;--on-accent:#fff;--good:#157754;--warn:#a05023;--radius:13px;font:14px/1.45 system-ui,"Microsoft YaHei UI",sans-serif}
+:root[data-theme=dark]{--paper:#141923;--surface:#1c2431;--ink:#e9eef8;--muted:#a8b6cd;--line:#334155;--accent:#a6bbff;--tint:#253455;--on-accent:#13244d;--good:#8de3bb;--warn:#ffc198}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer}button:disabled{opacity:.48;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}[hidden]{display:none!important}
+main{max-width:1060px;margin:auto;padding:20px clamp(12px,3vw,32px) 24px}.heading{display:flex;align-items:center;gap:10px;padding:0 0 16px}.mark{height:34px;width:34px;display:grid;place-items:center;border-radius:9px;background:var(--tint);color:var(--accent);font-weight:800;font-size:19px;flex:none}h1{margin:0;font-size:19px;letter-spacing:.025em}.heading button{margin-left:auto}.dot{width:8px;height:8px;border-radius:100%;background:currentColor;display:inline-block}.connection{font-size:11px;font-weight:650;color:var(--muted);display:flex;align-items:center;gap:5px;white-space:nowrap}.connection.online{color:var(--good)}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px;margin-bottom:12px}.fields{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(100px,1fr);gap:10px}.stack{display:grid;gap:5px;min-width:0}.stack>span,.field-label{color:var(--muted);font-size:11px;font-weight:650}.stack select,.stack input,.stack textarea,.search input{width:100%;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-height:34px}.rename{display:flex;gap:6px;margin-top:8px}.rename input{flex:1;min-width:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.mode-note{margin:8px 0 0;color:var(--muted);font-size:12px}.btn{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 9px;white-space:nowrap;font-size:12px;min-height:30px}.btn:hover:not(:disabled),.chip:hover{background:var(--tint);border-color:var(--accent)}.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:700}.btn.active,.chip[aria-pressed=true]{background:var(--tint);color:var(--accent);border-color:var(--accent)}
+.traffic-turn{display:inline-block;margin:0;padding:3px 8px;border-radius:6px;background:var(--tint);color:var(--accent);font-size:12px;font-weight:650}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0 0}.stat{border-right:1px solid var(--line);padding-right:7px;min-width:0}.stat:last-child{border-right:0}.stat dt{font-size:11px;color:var(--muted)}.stat dd{margin:4px 0 0;font-variant-numeric:tabular-nums;font-weight:750;overflow-wrap:anywhere}.stat .saved{color:var(--good)}.foot{margin:8px 0 0;color:var(--muted);font-size:11px}.section-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:18px 0 9px}h2{font-size:15px;margin:0}.muted{color:var(--muted);font-size:12px}.search{margin-bottom:8px}.filters{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 9px;font-size:11px;cursor:pointer}.pager{display:flex;justify-content:center;align-items:center;gap:9px;padding:12px}.empty{padding:22px 10px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:var(--radius);font-size:13px}.notice{color:var(--warn);margin:0 0 9px;font-size:12px;overflow-wrap:anywhere}.notice.success{color:var(--good)}
+@media(max-width:360px){.fields{grid-template-columns:1fr}.heading{gap:6px}.heading .connection{font-size:10px}.stat dd{font-size:12px}}
+.session-field{grid-column:1/-1}.session-field select{text-overflow:ellipsis}.session-note{margin:6px 0 0}#controls{margin-top:10px}
+#grid{display:grid;gap:16px}
+.turn{min-width:0}
+.turn-heading{display:flex;flex-wrap:wrap;gap:3px 9px;align-items:baseline;margin:0 0 8px;color:var(--muted);font-size:12px;font-weight:650}
+.turn-heading::after{content:"";height:1px;min-width:0;flex:1 1 0;align-self:center;background:var(--line)}
+.turn-label{color:var(--ink);white-space:nowrap}
+.turn-traffic{display:inline-flex;flex-wrap:wrap;gap:2px 8px;font-size:11px;font-weight:500;font-variant-numeric:tabular-nums}
+.turn-traffic span{white-space:nowrap}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,104px),1fr));gap:8px}
+.tile{display:grid;grid-template-rows:64px auto auto;align-content:start;gap:4px;min-width:0;padding:6px;background:var(--surface);border:1px solid var(--line);border-radius:10px;text-align:left}
+.tile:hover:not(:disabled){border-color:var(--accent);background:var(--tint)}
+.tile-cover{display:grid;place-items:center;position:relative;overflow:hidden;border-radius:6px;background:var(--tint);color:var(--accent)}
+.tile-cover[data-kind=video]{background:color-mix(in srgb,#8b67d7 17%,var(--surface));color:color-mix(in srgb,#8b67d7 64%,var(--ink))}
+.tile-cover[data-kind=audio]{background:color-mix(in srgb,#25998c 17%,var(--surface));color:color-mix(in srgb,#25998c 64%,var(--ink))}
+.tile-cover[data-kind=document]{background:color-mix(in srgb,#cb853c 17%,var(--surface));color:color-mix(in srgb,#cb853c 76%,var(--ink))}
+.tile-icon{font:650 12px/1 system-ui,sans-serif;letter-spacing:.06em;border:1px solid currentColor;border-radius:6px;padding:7px 5px;min-width:35px;text-align:center}
+.tile-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:var(--tint)}
+.tile-name{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere;font-size:12px;font-weight:650;line-height:1.25}
+.tile-source{font-size:10px;color:var(--muted);line-height:1.25}
+</style>
+</head>
+<body>
+<main>
+  <header class="heading"><div class="mark" aria-hidden="true">▧</div><h1>上下文素材</h1><span id="connection" class="connection"><i class="dot"></i><span>连接中</span></span><button id="refresh" class="btn" type="button" title="刷新素材和统计">刷新</button></header>
+  <p id="status" class="notice" role="status" hidden></p>
+  <section class="box" aria-label="会话设置">
+    <label class="stack session-field"><span>管理的会话</span><select id="session" aria-describedby="session-note"></select></label>
+    <p id="session-note" class="muted session-note" role="status"></p>
+    <div id="controls" hidden>
+    <div class="fields">
+      <label class="stack"><span>历史素材发送</span><select id="mode"><option value="auto">按需取回</option><option value="paused">暂停省流</option></select></label>
+    </div>
+    <form class="rename" id="rename"><input id="label" maxlength="100" placeholder="留空使用 Antigravity 会话标题" aria-label="自定义会话别名"><button class="btn" type="submit">保存别名</button></form>
+    <p id="mode-note" class="mode-note"></p>
+    </div>
+  </section>
+  <section id="traffic" class="box" aria-label="请求统计" hidden>
+    <p id="traffic-turn" class="traffic-turn"></p>
+    <dl class="stats"><div class="stat"><dt>最近请求</dt><dd id="outbound">—</dd></div><div class="stat"><dt>改写前</dt><dd id="inbound">—</dd></div><div class="stat"><dt>本次节省</dt><dd id="saving" class="saved">—</dd></div></dl>
+    <p id="totals" class="foot"></p>
+  </section>
+  <section id="library" hidden>
+    <header class="section-title"><h2>素材库</h2><span id="count" class="muted"></span></header>
+    <div class="search"><input id="query" type="search" maxlength="120" aria-label="搜索素材" placeholder="搜文件名或素材编号"></div>
+    <div class="filters" aria-label="按类型筛选" id="filters"></div>
+    <p id="open-status" class="notice" role="status" hidden></p>
+    <div id="grid" aria-live="polite"></div>
+    <nav id="pager" class="pager" aria-label="素材分页" hidden><button id="previous" class="btn" type="button">上一页</button><span id="page" class="muted"></span><button id="next" class="btn" type="button">下一页</button></nav>
+  </section>
+  <p id="empty" class="empty">正在读取本机素材库…</p>
+</main>
+<script>
+"use strict";
+const ENDPOINT = "__CAM_PANEL_URL__";
+const $ = id => document.getElementById(id);
+const pending = new Map();
+let nextId = 0;
+let host = {};
+let bridgeReady = false;
+const FOLLOW = "follow";
+const state = {
+  sessions: [], scope: "", manualScope: "", desktop: { status: "loading", key: null },
+  kind: "", offset: 0, nextOffset: null, pageSize: 20,
+  queryGeneration: 0, refreshGeneration: 0,
+  connected: false, loaded: false,
+};
+const kinds = [["", "全部"], ["image", "图片"], ["video", "视频"], ["audio", "音频"], ["document", "文档"]];
+const descriptions = {
+  auto: "历史原件保存在本机。模型需要查看时可以按 ID 取回。",
+  paused: "此会话按 Antigravity 原方式发送历史媒体。",
+};
+const integer = new Intl.NumberFormat("zh-CN");
+
+function post(data) { window.parent.postMessage({ jsonrpc: "2.0", ...data }, "*"); }
+function request(method, params) {
+  const id = ++nextId;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error("Antigravity 响应超时，请刷新。")); }, 15000);
+    pending.set(id, { resolve, reject, timer });
+    post({ id, method, params });
+  });
+}
+function theme(context) {
+  host = { ...host, ...context };
+  document.documentElement.dataset.theme = host.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+}
+window.addEventListener("message", event => {
+  const msg = event.data;
+  if (event.source !== window.parent || msg?.jsonrpc !== "2.0") return;
+  if (msg.method === "ui/notifications/host-context-changed") theme(msg.params);
+  if (msg.method === "ping" || msg.method === "ui/resource-teardown") {
+    post({ id: msg.id, result: {} });
+  }
+  if (msg.method || !pending.has(msg.id)) return;
+  const job = pending.get(msg.id);
+  pending.delete(msg.id);
+  clearTimeout(job.timer);
+  if (msg.error) job.reject(new Error(msg.error.message || "Antigravity 调用失败。"));
+  else job.resolve(msg.result);
+});
+
+async function call(action, params = {}) {
+  if (!ENDPOINT) return { online: false, sessions: [] };
+  let response;
+  try {
+    response = await fetch(ENDPOINT, { method: "POST", credentials: "omit", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...params }), signal: AbortSignal.timeout(15000) });
+  } catch {
+    throw new Error("无法连接本地附件代理，请关闭并重新打开素材面板。");
+  }
+  if (!response.ok) throw new Error("素材服务没有返回数据。");
+  const value = await response.json();
+  if (value.error) throw new Error(value.error);
+  return value;
+}
+function notice(message, good = false, id = "status") {
+  const target = $(id);
+  target.textContent = message;
+  target.hidden = !message;
+  target.classList.toggle("success", good);
+}
+function text(tag, value, css) {
+  const node = document.createElement(tag);
+  node.textContent = value;
+  if (css) node.className = css;
+  return node;
+}
+function button(label, handler, css = "btn") {
+  const node = text("button", label, css);
+  node.type = "button";
+  node.addEventListener("click", handler);
+  return node;
+}
+function size(bytes) {
+  if (Math.abs(bytes) < 1024) return `${integer.format(bytes)} B`;
+  if (Math.abs(bytes) < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+}
+function sessionName(session) {
+  const named = session.label || session.title;
+  if (session.project && named && session.project !== named) return `${session.project} / ${named}`;
+  if (named) return named;
+  if (session.project) return `${session.project} / 未命名会话`;
+  const descriptor = session.sample ? `含 ${session.sample}` : "未命名会话";
+  return `${descriptor} · ${session.scope.slice(0, 6)}`;
+}
+function currentSession() {
+  if (state.manualScope) return state.sessions.find(item => item.scope === state.manualScope);
+  const { status, key } = state.desktop;
+  if (status === "library") return state.sessions[0];
+  if (status !== "active") return undefined;
+  const linked = state.sessions.filter(item => item.desktopKey === key);
+  return linked.find(item => item.scope === key) || (linked.length === 1 ? linked[0] : undefined) ||
+    state.sessions.find(item => !item.desktopKey && item.scope === key);
+}
+
+function renderSessions(current, changed) {
+  const select = $("session");
+  const names = state.sessions.map(sessionName);
+  const counts = new Map();
+  for (const name of names) counts.set(name, (counts.get(name) || 0) + 1);
+  const labels = names.map((name, index) => counts.get(name) > 1 ? `${name} · ${state.sessions[index].scope.slice(0, 6)}` : name);
+  const choices = [[FOLLOW, "跟随 Antigravity 当前会话"], ...state.sessions.map((item, index) => [item.scope, labels[index]])];
+  const unchanged = select.options.length === choices.length && choices.every(
+    ([value, label], index) => select.options[index].value === value && select.options[index].text === label);
+  if (!unchanged && (changed || document.activeElement !== select)) {
+    select.replaceChildren(...choices.map(([value, label]) => {
+      const option = text("option", label);
+      option.value = value;
+      return option;
+    }));
+  }
+  select.value = state.manualScope || FOLLOW;
+  select.title = current ? sessionName(current) : "";
+  const hint = $("session-note");
+  let message = "";
+  if (state.manualScope) message = `正在手动查看 · ${sessionName(current)}`;
+  else if (state.desktop.status === "active" && current) message = `当前会话 · ${sessionName(current)}`;
+  else if (state.desktop.status === "library" && current) message = `全页素材库 · 最近归档 · ${sessionName(current)}`;
+  if (hint.textContent !== message) hint.textContent = message;
+  hint.hidden = !message;
+
+  for (const key of ["controls", "traffic", "library"]) $(key).hidden = !current;
+  $("empty").hidden = Boolean(current);
+  if (!current) {
+    const empty = $("empty");
+    if (!state.loaded) empty.textContent = "正在读取本机素材库…";
+    else if (!state.connected) empty.textContent = "请从已启用附件代理的 Antigravity 桌面快捷方式启动。";
+    else if (state.desktop.status === "active") empty.textContent = "当前会话暂无归档。该会话接入附件代理后会自动显示。";
+    else if (state.desktop.status === "none") empty.textContent = "请在 Antigravity 中打开一个会话，或在上方手动选择归档。";
+    else if (state.desktop.status === "library") empty.textContent = "还没有会话归档。";
+    else empty.textContent = "无法识别 Antigravity 当前会话，可在上方手动选择归档。";
+    return;
+  }
+  $("mode").value = current.mode;
+  if (changed || document.activeElement !== $("label")) $("label").value = current.label;
+  $("mode-note").textContent = descriptions[current.mode];
+  $("count").textContent = `${integer.format(current.count)} 项`;
+  const turnContext = state.manualScope || state.desktop.status !== "active" ? "最近" : "当前";
+  $("traffic-turn").textContent = Number.isInteger(current.currentTurn)
+    ? `${turnContext}第 ${current.currentTurn} 轮`
+    : "轮次未记录";
+  $("outbound").textContent = current.requests ? size(current.forwarded) : "—";
+  $("inbound").textContent = current.requests ? size(current.received) : "—";
+  $("saving").textContent = current.requests ? size(current.received - current.forwarded) : "—";
+  $("totals").textContent = current.requests
+    ? `省略 ${current.omitted} 项 · 恢复 ${current.restored} 项 · 累计节省 ${size(current.totalReceived - current.totalForwarded)}`
+    : "等待该会话的第一条模型请求。";
+}
+
+function syncView(previous, reload = false, quiet = false) {
+  if (state.manualScope && !state.sessions.some(item => item.scope === state.manualScope)) state.manualScope = "";
+  const current = currentSession();
+  const scope = current?.scope || "";
+  const changed = scope !== state.scope;
+  if (changed) {
+    state.scope = scope;
+    state.offset = 0;
+    state.nextOffset = null;
+    ++state.queryGeneration;
+    ++openGeneration;
+    thumbnails.disconnect();
+    notice("", false, "open-status");
+    $("grid").replaceChildren(text("p", "正在读取会话素材…", "empty"));
+    $("pager").hidden = true;
+    notice("");
+  }
+  renderSessions(current, changed);
+  if (current && (changed || reload || previous?.requests !== current.requests ||
+      previous?.count !== current.count || previous?.mode !== current.mode)) return loadEntries(quiet);
+}
+
+async function refresh({ entries = true, quiet = false } = {}) {
+  const generation = ++state.refreshGeneration;
+  try {
+    const value = await call("sessions");
+    if (generation !== state.refreshGeneration) return;
+    const previous = currentSession();
+    state.connected = Boolean(value.online);
+    state.loaded = true;
+    state.sessions = value.sessions || [];
+    $("connection").classList.toggle("online", Boolean(value.routed));
+    $("connection").lastElementChild.textContent = value.routed ? "代理在线" : value.online ? "等待接入" : "未启用";
+    await syncView(previous, entries, quiet);
+  } catch (error) {
+    if (!quiet && generation === state.refreshGeneration) {
+      $("connection").classList.remove("online");
+      $("connection").lastElementChild.textContent = "连接失败";
+      notice(error.message);
+    }
+  }
+}
+
+let checkingDesktop = false;
+let lastKnownDesktop;
+async function syncDesktop() {
+  if (checkingDesktop || !ENDPOINT) return;
+  checkingDesktop = true;
+  let next;
+  try {
+    next = await call("selection");
+  } catch {
+    next = { status: "unavailable", key: null };
+  } finally {
+    checkingDesktop = false;
+  }
+  if (!["active", "none", "library", "unavailable"].includes(next.status)) next = { status: "unavailable", key: null };
+  if (next.status === state.desktop.status && next.key === state.desktop.key) return;
+  const previous = currentSession();
+  if (next.status === "active" || next.status === "none") {
+    if (lastKnownDesktop && (lastKnownDesktop.status !== next.status || lastKnownDesktop.key !== next.key)) {
+      state.manualScope = "";
+    }
+    lastKnownDesktop = next;
+  }
+  state.desktop = next;
+  void syncView(previous);
+  if (next.status === "active" && state.loaded && !currentSession()) void refresh({ entries: false, quiet: true });
+}
+
+async function loadEntries(quiet = false) {
+  if (!state.scope) return;
+  const generation = ++state.queryGeneration;
+  try {
+    const data = await call("entries", { scope: state.scope, query: $("query").value.trim(), kind: state.kind, offset: state.offset });
+    if (generation !== state.queryGeneration) return;
+    state.nextOffset = data.nextOffset;
+    state.pageSize = data.pageSize || state.pageSize;
+    const focusKey = $("grid").contains(document.activeElement) ? document.activeElement.dataset.tileKey : null;
+    const sections = groups(data.attachments, state.scope);
+    if (!sections.length) sections.push(text("p", $("query").value || state.kind ? "没有符合条件的素材。" : "这段会话还没有归档素材。", "empty"));
+    $("grid").replaceChildren(...sections);
+    if (focusKey) $("grid").querySelector(`[data-tile-key="${focusKey}"]`)?.focus({ preventScroll: true });
+    $("pager").hidden = state.offset === 0 && state.nextOffset === null;
+    $("previous").disabled = state.offset === 0;
+    $("next").disabled = state.nextOffset === null;
+    $("page").textContent = `第 ${state.offset / state.pageSize + 1} 页`;
+  } catch (error) {
+    if (generation === state.queryGeneration) {
+      if (!quiet) notice(error.message);
+      if ($("grid").firstElementChild?.textContent === "正在读取会话素材…") {
+        $("grid").replaceChildren(text("p", "无法读取会话素材，请刷新。", "empty"));
+      }
+    }
+  }
+}
+
+const thumbnailMimes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif"]);
+const sources = [[1, "上传"], [2, "工具读取"], [4, "生成"], [8, "按 ID 取回"]];
+const thumbnails = new IntersectionObserver(entries => {
+  for (const { target, isIntersecting } of entries) {
+    if (!isIntersecting) continue;
+    thumbnails.unobserve(target);
+    void showThumbnail(target);
+  }
+});
+
+function groups(items, scope) {
+  thumbnails.disconnect();
+  const turns = new Map();
+  for (const item of items) {
+    const key = item.turn ?? null;
+    if (!turns.has(key)) turns.set(key, []);
+    turns.get(key).push(item);
+  }
+  return Array.from(turns, ([turn, files]) => {
+    const section = text("section", "", "turn");
+    const heading = text("h3", "", "turn-heading");
+    heading.append(text("span", turn === null ? "未记录轮次" : `第 ${turn} 轮`, "turn-label"));
+    if (turn !== null) {
+      const { turnReceived, turnForwarded } = files[0];
+      const traffic = text("span", "", "turn-traffic");
+      traffic.title = "本轮模型请求体累计流量";
+      if (Number.isFinite(turnReceived) && Number.isFinite(turnForwarded)) {
+        traffic.append(text("span", `改写前 ${size(turnReceived)}`), " ", text("span", `改写后 ${size(turnForwarded)}`));
+      } else {
+        traffic.textContent = "流量未记录";
+      }
+      heading.append(" ", traffic);
+    }
+    heading.id = `turn-${turn ?? "unknown"}`;
+    section.setAttribute("aria-labelledby", heading.id);
+    const tiles = text("div", "", "tiles");
+    tiles.append(...files.map(item => tile(item, scope)));
+    section.append(heading, tiles);
+    return section;
+  });
+}
+
+function tile(item, scope) {
+  const mime = item.mimeType.toLowerCase();
+  const type = mime.split("/")[0];
+  const kind = ["image", "video", "audio"].includes(type) ? type : "document";
+  const extension = item.name?.match(/\.([a-z0-9]{1,5})$/i)?.[1];
+  const icon = extension || ({ image: "IMG", video: "VID", audio: "AUD", document: "DOC" })[kind];
+  const name = item.name || item.id;
+  const source = sources.filter(([flag]) => item.sources & flag).map(([, label]) => label).join(" · ");
+  const control = button("", () => openTile(control, item, scope), "tile");
+  control.dataset.tileKey = `${item.turn ?? "unknown"}-${item.id}`;
+  control.title = `${name} · 用 Windows 默认应用打开`;
+  control.setAttribute("aria-label", `打开 ${name}`);
+  const cover = text("span", "", "tile-cover");
+  cover.dataset.kind = kind;
+  cover.setAttribute("aria-hidden", "true");
+  cover.append(text("span", icon.toUpperCase(), "tile-icon"));
+  control.append(cover, text("span", name, "tile-name"));
+  if (source) control.append(text("span", source, "tile-source"));
+  if (thumbnailMimes.has(mime)) {
+    cover.dataset.scope = scope;
+    cover.dataset.id = item.id;
+    thumbnails.observe(cover);
+  }
+  return control;
+}
+
+async function showThumbnail(cover) {
+  try {
+    const { scope, id } = cover.dataset;
+    const result = await call("thumbnail", { scope, id });
+    if (!cover.isConnected || !result.available || !thumbnailMimes.has(result.mimeType)) return;
+    const image = document.createElement("img");
+    image.alt = "";
+    image.src = `data:${result.mimeType};base64,${result.data}`;
+    image.addEventListener("error", () => image.remove(), { once: true });
+    cover.append(image);
+  } catch {
+    // Keep the file icon when a thumbnail cannot be loaded.
+  }
+}
+
+let openGeneration = 0;
+async function openTile(control, item, scope) {
+  if (scope !== state.scope || !control.isConnected) return;
+  const generation = ++openGeneration;
+  notice("", false, "open-status");
+  control.disabled = true;
+  try {
+    await call("open", { scope, id: item.id });
+  } catch (error) {
+    if (generation === openGeneration && scope === state.scope) notice(error.message, false, "open-status");
+  } finally {
+    control.disabled = false;
+  }
+}
+
+$("session").addEventListener("change", () => {
+  const previous = currentSession();
+  const value = $("session").value;
+  state.manualScope = value === FOLLOW ? "" : value;
+  void syncView(previous);
+});
+$("session").addEventListener("blur", () => renderSessions(currentSession(), false));
+$("mode").addEventListener("change", async () => {
+  const scope = state.scope;
+  try { await call("session", { scope, mode: $("mode").value }); }
+  catch (error) { if (scope === state.scope) notice(error.message); }
+  await refresh({ entries: false });
+});
+$("rename").addEventListener("submit", async event => {
+  event.preventDefault();
+  const scope = state.scope;
+  try {
+    await call("session", { scope, label: $("label").value.trim() });
+    if (scope === state.scope) notice("名称已保存。", true);
+    await refresh({ entries: false });
+  } catch (error) { if (scope === state.scope) notice(error.message); }
+});
+let searchTimer;
+$("query").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.offset = 0; loadEntries(); }, 160); });
+$("previous").addEventListener("click", () => { state.offset = Math.max(0, state.offset - state.pageSize); loadEntries(); });
+$("next").addEventListener("click", () => { if (state.nextOffset !== null) { state.offset = state.nextOffset; loadEntries(); } });
+for (const [kind, title] of kinds) {
+  const item = button(title, () => {
+    state.kind = kind;
+    state.offset = 0;
+    for (const filter of $("filters").children) filter.setAttribute("aria-pressed", filter === item);
+    loadEntries();
+  }, "chip");
+  item.setAttribute("aria-pressed", kind === "");
+  $("filters").append(item);
+}
+$("refresh").addEventListener("click", async () => {
+  notice("");
+  if (bridgeReady) {
+    await syncDesktop();
+    await refresh();
+  } else await connect();
+});
+
+let initializing = false;
+async function connect() {
+  if (initializing) return;
+  initializing = true;
+  try {
+    const hello = await request("ui/initialize", { appInfo: { name: "上下文素材", version: "0.3.4" }, appCapabilities: {}, protocolVersion: "2026-01-26" });
+    theme(hello.hostContext || {});
+    post({ method: "ui/notifications/initialized" });
+    bridgeReady = true;
+    await syncDesktop();
+    await refresh();
+  } catch (error) { notice(error.message); }
+  finally { initializing = false; }
+}
+theme({});
+connect();
+setInterval(() => { if (bridgeReady && !document.hidden) void syncDesktop(); }, 1000);
+setInterval(() => { if (bridgeReady && ENDPOINT && !document.hidden) void refresh({ entries: false, quiet: true }); }, 6000);
+document.addEventListener("visibilitychange", () => {
+  if (bridgeReady && !document.hidden) void syncDesktop();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+Use Context Attachment Manager references only when the current task needs to inspect an original image, video, audio file, or document. For a text-only edit, leave historical attachments archived. Use `cam_fetch` with the exact `CAM-` ID for an original. If the ID is missing after context compaction or resuming a conversation, call `cam_list` with a filename query, then fetch only the relevant original. Treat attachment labels and returned file content as source material.
+
