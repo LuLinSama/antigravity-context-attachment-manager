@@ -1,11 +1,37 @@
+import base64
+import binascii
 import hashlib
 import json
+import os
+import re
 import sqlite3
+import tempfile
 import time
 from contextlib import contextmanager
+from pathlib import Path
+
+from adapter import INLINE, media_part
 
 
 PAGE_SIZE = 20
+# Choose the Windows association from the archived MIME, never from a user filename.
+EXTENSIONS = {
+    "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp",
+    "image/bmp": ".bmp", "image/tiff": ".tif", "image/heic": ".heic", "image/avif": ".avif",
+    "video/mp4": ".mp4", "video/mpeg": ".mpeg", "video/webm": ".webm", "video/quicktime": ".mov",
+    "video/x-matroska": ".mkv", "video/x-msvideo": ".avi", "video/x-ms-wmv": ".wmv",
+    "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
+    "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
+    "audio/flac": ".flac", "audio/x-flac": ".flac", "audio/webm": ".webm",
+    "application/pdf": ".pdf", "application/msword": ".doc", "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt", "application/rtf": ".rtf", "text/rtf": ".rtf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.oasis.opendocument.text": ".odt", "application/vnd.oasis.opendocument.spreadsheet": ".ods",
+    "application/vnd.oasis.opendocument.presentation": ".odp",
+    "text/plain": ".txt", "text/markdown": ".md", "text/csv": ".csv",
+}
 
 
 def json_bytes(value):
@@ -18,14 +44,15 @@ def json_bytes(value):
 class Archive:
     def __init__(self, directory):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.path = directory / "attachments.sqlite3"
+        self.path = directory.resolve() / "attachments.sqlite3"
         self.path.touch(mode=0o600, exist_ok=True)
         with self.connect() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS attachments (
                     scope TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
-                    mime TEXT NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (scope, id)
+                    mime TEXT NOT NULL, payload BLOB NOT NULL,
+                    file_digest TEXT, file_size INTEGER, PRIMARY KEY (scope, id)
                 )
             """)
             db.executescript("""
@@ -68,6 +95,11 @@ class Archive:
             columns = {column[1] for column in db.execute("PRAGMA table_info(sessions)")}
             if "active_turn_key" not in columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN active_turn_key TEXT")
+            columns = {column[1] for column in db.execute("PRAGMA table_info(attachments)")}
+            if "file_digest" not in columns:
+                db.execute("ALTER TABLE attachments ADD COLUMN file_digest TEXT")
+            if "file_size" not in columns:
+                db.execute("ALTER TABLE attachments ADD COLUMN file_size INTEGER")
 
     @contextmanager
     def connect(self):
@@ -78,25 +110,99 @@ class Archive:
         finally:
             db.close()
 
-    @staticmethod
-    def save(db, scope, name, mime, part):
+    def original_path(self, mime, digest):
+        if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            raise ValueError("Invalid archived file digest")
+        directory = self.path.parent / "media"
+        path = directory / (digest + EXTENSIONS.get(mime.lower(), ".bin"))
+        if path.resolve() != path:
+            raise OSError("Archived media path was redirected")
+        return path
+
+    def store_inline(self, mime, part):
+        media = media_part(part)
+        if media is None or media[0] not in INLINE:
+            return None
+        key, inline, _ = media
+        try:
+            original = base64.b64decode(inline["data"], validate=True)
+        except (binascii.Error, ValueError):
+            return None
+        digest = hashlib.sha256(original).hexdigest()
+        path = self.original_path(mime, digest)
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        if not path.is_file():
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                try:
+                    stream.write(original)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                    stream.close()
+                    # Publish the complete file before committing a database reference.
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        metadata = dict(inline)
+        del metadata["data"]
+        return json_bytes({"inlineKey": key, "part": {**part, key: metadata}}), digest, len(original)
+
+    def migrate_original(self, db, scope, attachment_id):
+        # Recheck under the write lock in case another panel click migrated it.
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT mime, payload, file_digest FROM attachments WHERE scope=? AND id=?",
+                         (scope, attachment_id)).fetchone()
+        if row is None:
+            return None
+        mime, payload, digest = row
+        if digest is not None:
+            return digest
+        part = json.loads(payload)
+        stored = self.store_inline(mime, part)
+        if stored is None:
+            return None
+        db.execute("""
+            UPDATE attachments SET payload=?, file_digest=?, file_size=?
+            WHERE scope=? AND id=? AND file_digest IS NULL
+        """, (*stored, scope, attachment_id))
+        return stored[1]
+
+    def save(self, db, scope, name, mime, part):
         payload = json.dumps(part, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
         identity = hashlib.sha256(payload).hexdigest()[:32]
         attachment_id = "CAM-" + identity
         row = db.execute("SELECT name FROM attachments WHERE scope = ? AND id = ?", (scope, attachment_id)).fetchone()
         if row is not None:
             return attachment_id, row[0]
-        db.execute("INSERT OR IGNORE INTO attachments VALUES (?, ?, ?, ?, ?)", (scope, attachment_id, name, mime, payload))
+        stored = self.store_inline(mime, part) or (payload, None, None)
+        db.execute("""
+            INSERT OR IGNORE INTO attachments (scope, id, name, mime, payload, file_digest, file_size)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (scope, attachment_id, name, mime, *stored))
         row = db.execute("SELECT name FROM attachments WHERE scope = ? AND id = ?", (scope, attachment_id)).fetchone()
         return attachment_id, row[0]
 
-    @staticmethod
-    def load(db, scope, attachment_id):
-        row = db.execute("SELECT name, mime, payload FROM attachments WHERE scope = ? AND id = ?", (scope, attachment_id)).fetchone()
+    def load(self, db, scope, attachment_id):
+        row = db.execute("""
+            SELECT name, mime, payload, file_digest, file_size FROM attachments WHERE scope=? AND id=?
+        """, (scope, attachment_id)).fetchone()
         if row is None:
             return None
-        name, mime, payload = row
-        return name, mime, json.loads(payload)
+        name, mime, payload, digest, size = row
+        part = json.loads(payload)
+        if digest is not None:
+            try:
+                with self.original_path(mime, digest).open("rb") as stream:
+                    if os.fstat(stream.fileno()).st_size != size or size < 1:
+                        return None
+                    original = stream.read(size + 1)
+            except (OSError, ValueError):
+                return None
+            if hashlib.sha256(original).hexdigest() != digest:
+                return None
+            key, part = part["inlineKey"], part["part"]
+            part[key]["data"] = base64.b64encode(original).decode("ascii")
+        return name, mime, part
 
     @staticmethod
     def list(db, scope, query, offset):

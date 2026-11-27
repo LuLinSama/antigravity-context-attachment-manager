@@ -70,7 +70,7 @@ def backfill(archive, db, scope, conversation_id, gemini=None):
     if not isinstance(conversation_id, str) or not UUID.fullmatch(conversation_id):
         return
     rows = db.execute("""
-        SELECT a.id, lower(a.mime), length(a.payload), EXISTS (
+        SELECT a.id, lower(a.mime), COALESCE((a.file_size + 2) / 3 * 4, length(a.payload)), EXISTS (
             SELECT 1 FROM turn_attachments u WHERE u.scope=a.scope AND u.id=a.id
         ) FROM attachments a WHERE a.scope=?
     """, (scope,)).fetchall()

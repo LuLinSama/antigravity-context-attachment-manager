@@ -3,5 +3,5 @@
   "name": "antigravity-context-attachment-manager",
   "displayName": "Context Attachment Manager",
   "description": "Browse and manage historical media in Antigravity, and send originals only when needed.",
-  "version": "0.3.5"
+  "version": "0.3.6"
 }

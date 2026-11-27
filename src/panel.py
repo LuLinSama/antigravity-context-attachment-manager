@@ -1,15 +1,13 @@
 """Local tools for the Antigravity MCP Apps panel."""
 
-import base64
-import binascii
 import os
 import re
 import sqlite3
-import tempfile
+import stat
 from pathlib import Path
 
 from adapter import INLINE, media_part
-from archive import PAGE_SIZE
+from archive import EXTENSIONS, PAGE_SIZE
 from conversation_names import UUID, desktop_names, fingerprint
 from desktop_selection import desktop_selection, public_selection
 from native_state import data_dir, read_state
@@ -23,24 +21,6 @@ RESOURCE = {"uri": URI, "name": "上下文素材", "mimeType": "text/html;profil
 OPEN_PANEL = "cam_open_panel"
 MAX_THUMBNAIL = 512 * 1024
 MODES = {"auto", "paused"}
-# Choose the Windows association from the archived MIME, never from a user filename.
-EXTENSIONS = {
-    "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp",
-    "image/bmp": ".bmp", "image/tiff": ".tif", "image/heic": ".heic", "image/avif": ".avif",
-    "video/mp4": ".mp4", "video/mpeg": ".mpeg", "video/webm": ".webm", "video/quicktime": ".mov",
-    "video/x-matroska": ".mkv", "video/x-msvideo": ".avi", "video/x-ms-wmv": ".wmv",
-    "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
-    "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
-    "audio/flac": ".flac", "audio/x-flac": ".flac", "audio/webm": ".webm",
-    "application/pdf": ".pdf", "application/msword": ".doc", "application/vnd.ms-excel": ".xls",
-    "application/vnd.ms-powerpoint": ".ppt", "application/rtf": ".rtf", "text/rtf": ".rtf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-    "application/vnd.oasis.opendocument.text": ".odt", "application/vnd.oasis.opendocument.spreadsheet": ".ods",
-    "application/vnd.oasis.opendocument.presentation": ".odp",
-    "text/plain": ".txt", "text/markdown": ".md", "text/csv": ".csv",
-}
 THUMBNAIL_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif"}
 
 PANEL_TOOLS = [
@@ -122,18 +102,21 @@ def apply_action(archive, db, action, args):
             return {"ok": True}
     attachment_id = args.get("id")
     if isinstance(attachment_id, str) and ATTACHMENT_ID.fullmatch(attachment_id):
-        if action in {"open", "thumbnail"}:
-            if action == "thumbnail":
-                info = db.execute("SELECT mime, length(payload) FROM attachments WHERE scope=? AND id=?",
-                                  (scope, attachment_id)).fetchone()
-                if info is None or info[0].lower() not in THUMBNAIL_MIMES or info[1] > MAX_THUMBNAIL * 4 // 3 + 4096:
-                    return {"available": False}
+        if action == "open":
+            return open_attachment(archive, db, scope, attachment_id)
+        if action == "thumbnail":
+            info = db.execute("""
+                SELECT mime, file_size, length(payload) FROM attachments WHERE scope=? AND id=?
+            """, (scope, attachment_id)).fetchone()
+            if info is None:
+                return {"available": False}
+            mime, file_size, payload_size = info
+            too_large = (file_size > MAX_THUMBNAIL if file_size is not None
+                         else payload_size > MAX_THUMBNAIL * 4 // 3 + 4096)
+            if mime.lower() not in THUMBNAIL_MIMES or too_large:
+                return {"available": False}
             record = archive.load(db, scope, attachment_id)
-            if record is None:
-                return {"error": "找不到该素材。"}
-            if action == "open":
-                return open_attachment(archive.path.parent, attachment_id, record)
-            return thumbnail(record)
+            return thumbnail(record) if record else {"available": False}
     return {"error": "素材操作无效，或素材已不在该会话的档案中。"}
 
 
@@ -148,43 +131,27 @@ def thumbnail(record):
     return {"available": True, "mimeType": mime.lower(), "data": data}
 
 
-def open_attachment(directory, attachment_id, record):
-    name, mime, part = record
-    media = media_part(part)
-    if media is None or media[0] not in INLINE:
-        return {"error": "归档只保存了服务端引用，没有可在 Windows 打开的本地原件。"}
-    extension = EXTENSIONS.get(mime.lower())
-    if not extension:
+def open_attachment(archive, db, scope, attachment_id):
+    row = db.execute("SELECT mime, file_digest FROM attachments WHERE scope=? AND id=?",
+                     (scope, attachment_id)).fetchone()
+    if row is None:
+        return {"error": "找不到该素材。"}
+    mime, digest = row
+    if mime.lower() not in EXTENSIONS:
         return {"error": "此文件格式暂不支持从素材库打开。"}
     if not hasattr(os, "startfile"):
         return {"error": "此功能需要 Windows 默认应用。"}
     try:
-        original = base64.b64decode(media[1]["data"], validate=True)
-    except (binascii.Error, ValueError):
-        return {"error": "素材原件已损坏，无法打开。"}
-
-    base = re.split(r"[\\/]", name)[-1]
-    stem = Path(base).stem
-    stem = re.sub(r'[^\w .()-]', '_', stem).strip(' .')[:70]
-    cache = directory.resolve() / "preview-cache"
-    try:
-        cache.mkdir(exist_ok=True)
-        if cache.resolve() != cache:
-            return {"error": "无法使用当前预览缓存目录。"}
-        path = cache / f"{attachment_id}-{stem or 'attachment'}{extension}"
-        # Replace atomically so another panel click cannot open a partial file.
-        if path.is_symlink():
-            return {"error": "无法使用当前预览缓存文件。"}
-        if not path.is_file() or path.read_bytes() != original:
-            with tempfile.NamedTemporaryFile(dir=cache, delete=False) as stream:
-                temporary = Path(stream.name)
-                try:
-                    stream.write(original)
-                    stream.close()
-                    temporary.replace(path)
-                finally:
-                    temporary.unlink(missing_ok=True)
+        if digest is None:
+            digest = archive.migrate_original(db, scope, attachment_id)
+            if digest is None:
+                return {"error": "没有可在 Windows 打开的本地原件。素材可能是服务端引用或已损坏。"}
+            db.commit()
+        path = archive.original_path(mime, digest)
+        if not path.is_file():
+            return {"error": "本地归档文件已丢失。"}
+        path.chmod(stat.S_IREAD)
         os.startfile(str(path))
-    except OSError:
-        return {"error": "Windows 无法打开此素材。请检查默认应用或预览缓存。"}
+    except (OSError, ValueError):
+        return {"error": "Windows 无法打开此素材。请检查归档文件和默认应用。"}
     return {"ok": True}

@@ -407,13 +407,47 @@ class RelayTests(unittest.TestCase):
                     result = run_panel(self.archive, {"action": "open", "scope": report.scope, "id": entries[data["displayName"].split("\\")[-1]], "path": "arbitrary.exe"})
                     self.assertEqual(result, {"ok": True})
                     opened = Path(startfile.call_args.args[0])
-                    self.assertEqual(opened.parent, self.archive.path.parent / "preview-cache")
+                    self.assertEqual(opened.parent, self.archive.path.parent / "media")
                     self.assertEqual(opened.suffix, suffix)
                     self.assertEqual(opened.read_bytes(), base64.b64decode(data["data"]))
             for scope, attachment_id in ((report.scope, entries["danger.hta"]), (report.scope, entries[""]),
                                          (report.scope, "../elsewhere"), ("f" * 64, entries["report.pdf"])):
                 self.assertIn("error", run_panel(self.archive, {"action": "open", "scope": scope, "id": attachment_id}))
             self.assertEqual(startfile.call_count, 4)
+
+        self.assertFalse((self.archive.path.parent / "preview-cache").exists())
+
+    def test_legacy_archive_migrates_on_open_and_preserves_original(self):
+        directory = Path(self.directory.name) / "old"
+        directory.mkdir()
+        scope = "a" * 64
+        original = {"inline_data": self.video["inlineData"], "video_metadata": {"fps": 1}}
+        payload = json.dumps(original, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+        attachment_id = "CAM-" + hashlib.sha256(payload).hexdigest()[:32]
+        with closing(sqlite3.connect(directory / "attachments.sqlite3")) as db, db:
+            db.execute("""CREATE TABLE attachments (scope TEXT, id TEXT, name TEXT, mime TEXT, payload BLOB,
+                          PRIMARY KEY (scope, id))""")
+            db.execute("INSERT INTO attachments VALUES (?, ?, ?, ?, ?)",
+                       (scope, attachment_id, "scene.mp4", "video/mp4", payload))
+        archive = Archive(directory)
+        with archive.connect() as db:
+            self.assertEqual(archive.load(db, scope, attachment_id), ("scene.mp4", "video/mp4", original))
+        action = {"action": "open", "scope": scope, "id": attachment_id}
+        with patch("panel.os.startfile", create=True) as startfile:
+            self.assertEqual(run_panel(archive, action), {"ok": True})
+            first_path = Path(startfile.call_args.args[0])
+            self.assertEqual(run_panel(archive, action), {"ok": True})
+            self.assertEqual(Path(startfile.call_args.args[0]), first_path)
+        self.assertEqual(first_path.read_bytes(), b"video-data")
+        self.assertFalse((directory / "preview-cache").exists())
+        with archive.connect() as db:
+            stored, size = db.execute("SELECT payload, file_size FROM attachments").fetchone()
+            self.assertNotIn(base64.b64encode(b"video-data"), stored)
+            self.assertEqual(size, len(b"video-data"))
+            self.assertEqual(archive.load(db, scope, attachment_id), ("scene.mp4", "video/mp4", original))
+            other = "b" * 64
+            archive.save(db, other, "renamed.mp4", "video/mp4", media("video/mp4", b"video-data", "renamed.mp4"))
+            self.assertEqual(list((directory / "media").iterdir()), [first_path])
 
     def test_chunked_gzip_request_and_streaming_forward(self):
         seen = {}
