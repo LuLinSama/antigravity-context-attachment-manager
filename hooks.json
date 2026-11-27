@@ -1,17 +1,22 @@
 {
   "cam-file-reads": {
     "enabled": true,
-    "PostToolUse": [
-      {
-        "matcher": "^(view_file|read_file)$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python ./scripts/record_read.py",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
+    "PreToolUse": [{
+      "matcher": "^(view_file|read_file|invoke_subagent|define_subagent|manage_subagents)$",
+      "hooks": [{"type": "command", "command": "python ./scripts/guard_read.py", "timeout": 5}]
+    }],
+    "PostToolUse": [{
+      "matcher": "^(view_file|read_file)$",
+      "hooks": [{"type": "command", "command": "python ./scripts/record_read.py", "timeout": 5}]
+    }, {
+      "matcher": "^manage_subagents$",
+      "hooks": [{"type": "command", "command": "python ./scripts/track_usage.py kill", "timeout": 5}]
+    }]
+  },
+  "cam-invocation-usage": {
+    "enabled": true,
+    "PreInvocation": [{"type": "command", "command": "python ./scripts/track_usage.py pre", "timeout": 5}],
+    "PostInvocation": [{"type": "command", "command": "python ./scripts/track_usage.py post", "timeout": 5}],
+    "Stop": [{"type": "command", "command": "python ./scripts/track_usage.py stop", "timeout": 5}]
   }
 }

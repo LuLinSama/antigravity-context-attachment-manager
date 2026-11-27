@@ -1,52 +1,36 @@
-"""Supported Windows associations and legacy media decoding."""
+"""Windows local paths and file formats routed to the CAM Media subagent."""
 
 import os
-import re
 from pathlib import Path
 
 
-INLINE = ("inlineData", "inline_data")
-FILE = ("fileData", "file_data")
-OFFICE_MIME = {
-    "application/pdf", "application/msword", "application/vnd.ms-excel",
-    "application/vnd.ms-powerpoint", "application/rtf", "text/rtf",
-    "text/plain", "text/markdown", "text/csv",
+DELEGATED_READ = 16
+
+MEDIA_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+    ".webp": "image/webp", ".bmp": "image/bmp", ".tiff": "image/tiff", ".tif": "image/tiff",
+    ".heic": "image/heic", ".heif": "image/heif", ".avif": "image/avif", ".ico": "image/x-icon",
+    ".mp4": "video/mp4", ".mpeg": "video/mpeg", ".mpg": "video/mpeg", ".webm": "video/webm",
+    ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".avi": "video/x-msvideo",
+    ".wmv": "video/x-ms-wmv", ".m4v": "video/x-m4v", ".3gp": "video/3gpp",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".wave": "audio/wav", ".ogg": "audio/ogg",
+    ".opus": "audio/opus", ".aac": "audio/aac", ".m4a": "audio/mp4", ".flac": "audio/flac",
+    ".aiff": "audio/aiff", ".wma": "audio/x-ms-wma", ".pdf": "application/pdf",
+    ".doc": "application/msword", ".xls": "application/vnd.ms-excel",
+    ".ppt": "application/vnd.ms-powerpoint", ".rtf": "application/rtf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
 }
-MEDIA_PREFIXES = (
-    "image/", "audio/", "video/", "application/vnd.openxmlformats-officedocument.",
-    "application/vnd.oasis.opendocument.", "application/vnd.ms-word.",
-    "application/vnd.ms-excel.", "application/vnd.ms-powerpoint.",
-)
-UPLOADED, READ, GENERATED, FETCHED = 1, 2, 4, 8
-
-
-EXTENSIONS = {
-    "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp",
-    "image/bmp": ".bmp", "image/tiff": ".tif", "image/heic": ".heic", "image/avif": ".avif",
-    "video/mp4": ".mp4", "video/mpeg": ".mpeg", "video/webm": ".webm", "video/quicktime": ".mov",
-    "video/x-matroska": ".mkv", "video/x-msvideo": ".avi", "video/x-ms-wmv": ".wmv",
-    "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
-    "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
-    "audio/flac": ".flac", "audio/x-flac": ".flac", "audio/webm": ".webm",
-    "application/pdf": ".pdf", "application/msword": ".doc", "application/vnd.ms-excel": ".xls",
-    "application/vnd.ms-powerpoint": ".ppt", "application/rtf": ".rtf", "text/rtf": ".rtf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-    "application/vnd.oasis.opendocument.text": ".odt", "application/vnd.oasis.opendocument.spreadsheet": ".ods",
-    "application/vnd.oasis.opendocument.presentation": ".odp",
-    "text/plain": ".txt", "text/markdown": ".md", "text/csv": ".csv",
-}
-
-MIME_BY_EXTENSION = {extension: mime for mime, extension in EXTENSIONS.items()}
-MIME_BY_EXTENSION.update({".jpeg": "image/jpeg", ".tiff": "image/tiff", ".wave": "audio/wav"})
 
 
 def local_path(value):
     if not isinstance(value, str) or not value or "\0" in value or len(value) > 32767:
         return None
     path = Path(value)
-    # Exclude UNC, Windows device paths, alternate data streams, and shortcuts.
     if not path.is_absolute() or (os.name == "nt" and
             (len(path.drive) != 2 or not path.drive[0].isascii() or not path.drive[0].isalpha()
              or ":" in value[2:])):
@@ -54,34 +38,40 @@ def local_path(value):
     return path
 
 
-def source_file(value):
-    path = local_path(value)
-    if path is None or path.suffix.lower() not in MIME_BY_EXTENSION:
+def media_type(value):
+    if not isinstance(value, str) or not value or len(value) > 32767:
         return None
-    path = path.resolve(strict=True)
-    if local_path(str(path)) is None or not path.is_file():
-        return None
-    mime = MIME_BY_EXTENSION.get(path.suffix.lower())
-    return (path, mime) if mime else None
+    return MEDIA_TYPES.get(Path(value.rstrip(" .")).suffix.lower())
 
 
-def media_mime(value):
-    mime = value.get("mimeType", value.get("mime_type"))
-    if not isinstance(mime, str) or not re.fullmatch(r"[a-zA-Z0-9.+_-]+/[a-zA-Z0-9.+_-]+", mime):
-        return None
-    canonical = mime.lower()
-    if canonical in OFFICE_MIME or canonical.startswith(MEDIA_PREFIXES):
+def classify(value, workspace_paths=()):
+    """Match the submitted extension or the resolved local target, never read file contents."""
+    mime = media_type(value)
+    if mime:
         return mime
+    path = local_path(value)
+    if path is None and isinstance(value, str) and 0 < len(value) <= 32767 and "\0" not in value:
+        relative = Path(value)
+        if not relative.anchor and isinstance(workspace_paths, list):
+            return next((mime for folder in workspace_paths[:16]
+                         if (root := local_path(folder)) and (mime := classify(str(root / relative)))), None)
+    if path is not None:
+        try:
+            return media_type(path.resolve(strict=True).name)
+        except (OSError, RuntimeError, ValueError):
+            pass
     return None
 
 
-def media_part(part):
-    for key in (*INLINE, *FILE):
-        payload = part.get(key)
-        if not isinstance(payload, dict):
-            continue
-        mime = media_mime(payload)
-        data = payload.get("data") if key in INLINE else payload.get("fileUri", payload.get("file_uri"))
-        if mime and isinstance(data, str) and data:
-            return key, payload, mime
+def source_file(value):
+    path = local_path(value)
+    if path is None:
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+        mime = media_type(resolved.name)
+        if mime and local_path(str(resolved)) is not None and resolved.is_file():
+            return resolved, mime
+    except (OSError, RuntimeError, ValueError):
+        pass
     return None

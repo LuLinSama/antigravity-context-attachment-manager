@@ -17,10 +17,12 @@ main{max-width:1060px;margin:auto;padding:20px clamp(12px,3vw,32px) 24px}.headin
 .turn{min-width:0}
 .turn-heading{display:flex;flex-wrap:wrap;gap:3px 9px;align-items:baseline;margin:0 0 8px;color:var(--muted);font-size:12px;font-weight:650}
 .turn-heading::after{content:"";height:1px;min-width:0;flex:1 1 0;align-self:center;background:var(--line)}
+.traffic{margin-top:10px}.traffic-header{display:flex;justify-content:space-between;flex-wrap:wrap;gap:5px 10px;align-items:baseline}.traffic-values{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.traffic-values div{border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:0}.traffic-values strong{display:block;overflow-wrap:anywhere}.traffic-history{margin-top:6px}.traffic-history p{margin:5px 0;overflow-wrap:anywhere}.turn-traffic{font-weight:500}
 .turn-label{color:var(--ink);white-space:nowrap}
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,104px),1fr));gap:8px}
 .tile{display:grid;grid-template-rows:64px auto auto;align-content:start;gap:4px;min-width:0;padding:6px;background:var(--surface);border:1px solid var(--line);border-radius:10px;text-align:left}
 .tile:hover:not(:disabled){border-color:var(--accent);background:var(--tint)}
+.tile-card{display:flex;flex-direction:column;min-width:0;gap:4px}.tile-card .tile{flex:1}.tile-reference{width:100%;min-width:0;padding:3px 5px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);font:10px ui-monospace,monospace}
 .tile-cover{display:grid;place-items:center;position:relative;overflow:hidden;border-radius:6px;background:var(--tint);color:var(--accent)}
 .tile-cover[data-kind=video]{background:color-mix(in srgb,#8b67d7 17%,var(--surface));color:color-mix(in srgb,#8b67d7 64%,var(--ink))}
 .tile-cover[data-kind=audio]{background:color-mix(in srgb,#25998c 17%,var(--surface));color:color-mix(in srgb,#25998c 64%,var(--ink))}
@@ -41,6 +43,15 @@ main{max-width:1060px;margin:auto;padding:20px clamp(12px,3vw,32px) 24px}.headin
     <div id="controls" hidden>
     <form class="rename" id="rename"><input id="label" maxlength="100" placeholder="留空使用 Antigravity 会话标题" aria-label="自定义会话别名"><button class="btn" type="submit">保存别名</button></form>
     </div>
+  </section>
+  <section id="traffic" class="box traffic" aria-label="每轮上行流量" hidden>
+    <div class="traffic-header"><h2>上行流量</h2><span id="traffic-turn" class="muted"></span></div>
+    <div class="traffic-values">
+      <div><span class="muted">主 Agent</span><strong id="traffic-main">—</strong></div>
+      <div><span class="muted">子 Agent</span><strong id="traffic-child">—</strong></div>
+    </div>
+    <p id="traffic-note" class="muted session-note"></p>
+    <details id="traffic-history" class="muted traffic-history" hidden><summary>最近轮次（含纯文字）</summary><div id="traffic-list"></div></details>
   </section>
   <section id="library" hidden>
     <header class="section-title"><h2>素材库</h2><span id="count" class="muted"></span></header>
@@ -65,7 +76,7 @@ const state = {
   sessions: [], scope: "", manualScope: "", desktop: { status: "loading", key: null },
   kind: "", offset: 0, nextOffset: null, pageSize: 20,
   queryGeneration: 0, refreshGeneration: 0,
-  connected: false, loaded: false,
+  connected: false, loaded: false, trafficGeneration: 0, visibleTurns: [],
 };
 const kinds = [["", "全部"], ["image", "图片"], ["video", "视频"], ["audio", "音频"], ["document", "文档"]];
 const integer = new Intl.NumberFormat("zh-CN");
@@ -169,13 +180,13 @@ function renderSessions(current, changed) {
   if (hint.textContent !== message) hint.textContent = message;
   hint.hidden = !message;
 
-  for (const key of ["controls", "library"]) $(key).hidden = !current;
+  for (const key of ["controls", "library", "traffic"]) $(key).hidden = !current;
   $("empty").hidden = Boolean(current);
   if (!current) {
     const empty = $("empty");
     if (!state.loaded) empty.textContent = "正在读取本机素材库…";
     else if (!state.connected) empty.textContent = "无法打开本机素材库，请刷新。";
-    else if (state.desktop.status === "active") empty.textContent = "当前会话暂无素材。让 Antigravity 读取一个本地文件后即可查看。";
+    else if (state.desktop.status === "active") empty.textContent = "当前会话暂无素材。请发送本地素材路径，让 CAM Media 通过子 Agent 分析。";
     else if (state.desktop.status === "none") empty.textContent = "请在 Antigravity 中打开一个会话，或在上方手动选择归档。";
     else if (state.desktop.status === "library") empty.textContent = "还没有会话归档。";
     else empty.textContent = "无法识别 Antigravity 当前会话，可在上方手动选择归档。";
@@ -196,6 +207,9 @@ function syncView(previous, reload = false, quiet = false) {
     state.offset = 0;
     state.nextOffset = null;
     ++state.queryGeneration;
+    ++state.trafficGeneration;
+    state.visibleTurns = [];
+    renderTraffic({ pending: true });
     ++openGeneration;
     thumbnails.disconnect();
     notice("", false, "open-status");
@@ -206,6 +220,7 @@ function syncView(previous, reload = false, quiet = false) {
   renderSessions(current, changed);
   if (current && (changed || reload || previous?.occurrences !== current.occurrences ||
       previous?.count !== current.count)) return loadEntries(quiet);
+  if (current) return loadTraffic();
 }
 
 async function refresh({ entries = true, quiet = false } = {}) {
@@ -268,6 +283,8 @@ async function loadEntries(quiet = false) {
     const sections = groups(data.attachments, state.scope);
     if (!sections.length) sections.push(text("p", $("query").value || state.kind ? "没有符合条件的素材。" : "这段会话还没有归档素材。", "empty"));
     $("grid").replaceChildren(...sections);
+    state.visibleTurns = [...new Set(data.attachments.map(item => item.turn).filter(Number.isInteger))];
+    void loadTraffic();
     if (focusKey) $("grid").querySelector(`[data-tile-key="${focusKey}"]`)?.focus({ preventScroll: true });
     $("pager").hidden = state.offset === 0 && state.nextOffset === null;
     $("previous").disabled = state.offset === 0;
@@ -284,7 +301,7 @@ async function loadEntries(quiet = false) {
 }
 
 const thumbnailMimes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif"]);
-const sources = [[1, "上传"], [2, "工具读取"], [4, "生成"], [8, "按 ID 取回"]];
+const sources = [[16, "子 Agent 读取"]];
 const thumbnailQueue = [];
 let loadingThumbnails = 0;
 function pumpThumbnails() {
@@ -304,6 +321,50 @@ const thumbnails = new IntersectionObserver(entries => {
   }
 });
 
+function bytes(value) {
+  let amount = value;
+  let i = 0;
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  while (amount >= 1024 && i < units.length - 1) { amount /= 1024; i++; }
+  return `${amount.toLocaleString("zh-CN", { maximumFractionDigits: i ? 1 : 0 })} ${units[i]}`;
+}
+
+function trafficValue(value) {
+  if (value?.status === "estimated") return `≈ ${bytes(value.bytes)}`;
+  const reason = ({ overlap: "并发，无法归因", reset: "计数已重置", incomplete: "采样不完整",
+    unavailable: "计数不可用", active: "采样中", unobserved: "未观测" })[value?.status] || "—";
+  return Number.isFinite(value?.sampledBytes) ? `${reason}（有效窗口 ≈ ${bytes(value.sampledBytes)}）` : reason;
+}
+function trafficLine(turn) {
+  return `主 ${trafficValue(turn?.main)} · 子 ${trafficValue(turn?.child)}`;
+}
+function renderTraffic(data) {
+  const turns = data.turns || [];
+  const latest = turns[0];
+  $("traffic-turn").textContent = latest ? `第 ${latest.turn} 轮` : "暂无轮次";
+  $("traffic-main").textContent = trafficValue(latest?.main);
+  $("traffic-child").textContent = trafficValue(latest?.child);
+  for (const node of $("grid").querySelectorAll(".turn-heading")) {
+    const turn = turns.find(item => `turn-${item.turn}` === node.id);
+    node.querySelector(".turn-traffic").textContent = data.pending ? "" : turn ? trafficLine(turn) : "无上行采样";
+  }
+  const tags = [...new Set([data.tag, latest?.main?.tag, latest?.child?.tag].filter(Boolean))];
+  $("traffic-note").textContent = data.pending ? "正在读取本机计数记录…" : data.error ? "无法读取本机统计。" :
+    `${data.enabled ? `V2Ray / Xray${tags.length ? ` · ${tags.join(" / ")}` : ""}` : "上行采样已禁用或配置无效"}。仅为模型调用时间窗内的共享出站估算，可能含后台流量。`;
+  $("traffic-history").hidden = turns.length < 2;
+  $("traffic-list").replaceChildren(...turns.slice(1, 12).map(turn => text("p", `第 ${turn.turn} 轮 · ${trafficLine(turn)}`)));
+}
+async function loadTraffic() {
+  if (!state.scope) return;
+  const generation = ++state.trafficGeneration;
+  try {
+    const data = await call("traffic", { scope: state.scope, turns: state.visibleTurns });
+    if (generation === state.trafficGeneration) renderTraffic(data);
+  } catch {
+    if (generation === state.trafficGeneration) renderTraffic({ error: true });
+  }
+}
+
 function groups(items, scope) {
   thumbnails.disconnect();
   const turns = new Map();
@@ -317,6 +378,7 @@ function groups(items, scope) {
     const heading = text("h3", "", "turn-heading");
     heading.append(text("span", turn === null ? "未记录轮次" : `第 ${turn} 轮`, "turn-label"));
     heading.id = `turn-${turn ?? "unknown"}`;
+    heading.append(text("span", "", "turn-traffic"));
     section.setAttribute("aria-labelledby", heading.id);
     const tiles = text("div", "", "tiles");
     tiles.append(...files.map(item => tile(item, scope)));
@@ -348,7 +410,16 @@ function tile(item, scope) {
     cover.dataset.id = item.id;
     thumbnails.observe(cover);
   }
-  return control;
+  const card = text("div", "", "tile-card");
+  const reference = document.createElement("input");
+  reference.className = "tile-reference";
+  reference.value = item.id;
+  reference.readOnly = true;
+  reference.title = item.id;
+  reference.setAttribute("aria-label", `${name} 的素材编号，可复制`);
+  reference.addEventListener("focus", () => reference.select());
+  card.append(control, reference);
+  return card;
 }
 
 async function showThumbnail(cover) {
@@ -424,7 +495,7 @@ async function connect() {
   if (initializing) return;
   initializing = true;
   try {
-    const hello = await request("ui/initialize", { appInfo: { name: "上下文素材", version: "0.4.0" }, appCapabilities: {}, protocolVersion: "2026-01-26" });
+    const hello = await request("ui/initialize", { appInfo: { name: "上下文素材", version: "0.5.0" }, appCapabilities: {}, protocolVersion: "2026-01-26" });
     theme(hello.hostContext || {});
     post({ method: "ui/notifications/initialized" });
     bridgeReady = true;

@@ -1,6 +1,6 @@
-import base64
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -16,7 +16,12 @@ import panel
 from archive import Archive
 from conversation_names import fingerprint
 from desktop_selection import selection_from_targets
+from media import DELEGATED_READ
+from media_delegation import launch_step, turn_before
+from guard_read import guard
 from record_read import record_event
+from usage import Metrics, Usage
+from track_usage import lifecycle
 
 
 FIRST = "1a111111-0000-0000-0000-111111111111"
@@ -38,112 +43,181 @@ class NativeLibraryTests(unittest.TestCase):
                                   for index in (0, 4)), encoding="utf-8")
         return path
 
+    def entries(self, conversation=FIRST, **args):
+        with self.archive.connect() as db:
+            return self.archive.entries(db, fingerprint(conversation), "", args.get("kind", ""), 0)["attachments"]
+
+    def delegate(self, agent="cam-media", launches=True):
+        db = sqlite3.connect(self.root / "conversation_summaries.db")
+        with db:
+            db.execute("CREATE TABLE conversation_summaries (conversation_id, agent_name, parent_conversation_id)")
+            db.executemany("INSERT INTO conversation_summaries VALUES (?, ?, ?)", [(FIRST, "", None), (SECOND, agent, FIRST)])
+        db.close()
+        rows = [
+            {"step_index": 0, "type": "USER_INPUT"},
+            {"step_index": 3, "type": "USER_INPUT"},
+            {"step_index": 4, "type": "PLANNER_RESPONSE", "source": "MODEL", "status": "DONE",
+             "tool_calls": [{"name": "invoke_subagent", "args": {"TypeName": "cam-media"}}]},
+            {"step_index": 5, "type": "GENERIC", "source": "MODEL", "status": "DONE",
+             "content": "Created the following subagent:\n" + json.dumps({"conversationId": SECOND})},
+            {"step_index": 6, "type": "USER_INPUT"},
+        ]
+        log = self.transcript()
+        log.write_text("\n".join(map(json.dumps, rows if launches else rows[:3])), encoding="utf-8")
+        return log, rows
+
     def event(self, path, step=2, conversation=FIRST, **fields):
         return {"toolCall": {"name": "read_file", "args": {"Path": str(path)}},
-                "conversationId": conversation, "stepIdx": step,
-                "transcriptPath": str(self.transcript(conversation)), **fields}
+                "conversationId": conversation, "stepIdx": step, **fields}
 
-    def entries(self, conversation=FIRST, **args):
-        return panel.run(self.archive, {"action": "entries", "scope": fingerprint(conversation), **args})["attachments"]
+    def test_main_text_allowed_and_media_denied_before_read(self):
+        self.delegate()
+        for name in ("code.py", "notes.md", "table.csv", "data.json"):
+            self.assertEqual(guard(self.event(self.root / name), self.data, self.root)["decision"], "allow")
+        for name in ("MOVIE.MP4", "sample.pdf", "sample.jpg", "result.wav", "notes.docx"):
+            denied = guard(self.event(self.root / name), self.data, self.root)
+            self.assertEqual(denied["decision"], "deny")
+            self.assertIn("invoke_subagent", denied["reason"])
+        self.assertEqual(guard({"toolCall": {"name": "invoke_subagent"}, "conversationId": FIRST}, self.data, self.root)["decision"], "allow")
 
-    def test_large_file_reference_is_deduplicated_per_turn_without_copying(self):
+    def test_child_uses_one_read_never_delegates_or_reuses(self):
+        self.delegate()
+        doc = self.root / "sample.pdf"
+        event = self.event(doc, conversation=SECOND)
+        self.assertEqual(guard(event, self.data, self.root)["decision"], "allow")
+        self.assertEqual(guard(event, self.data, self.root)["decision"], "allow")  # duplicate installed hooks
+        for denied in (self.event(doc, step=3, conversation=SECOND),
+                       self.event(doc.with_suffix(".wav"), conversation=SECOND),
+                       {**event, "toolCall": {"name": "invoke_subagent"}},
+                       self.event(doc, conversation="3a333333-0000-0000-0000-333333333333")):
+            reply = guard(denied, self.data, self.root)
+            self.assertEqual(reply["decision"], "deny")
+            self.assertNotIn("invoke_subagent", reply["reason"])
+
+    def test_finished_child_cannot_be_reawakened_even_with_traffic_disabled(self):
+        self.delegate()
+        self.data.mkdir(exist_ok=True)
+        (self.data / "traffic.json").write_text('{"enabled": false}', encoding="utf-8")
+        event = {"conversationId": SECOND, "invocationNum": 0, "initialNumSteps": 1}
+        self.assertIsNone(lifecycle(event, "pre", self.data, self.root))
+        self.assertEqual(lifecycle({**event, "fullyIdle": True}, "stop", self.data, self.root), {"decision": "stop"})
+        restart = lifecycle(event, "pre", self.data, self.root)
+        self.assertEqual(restart["terminationBehavior"], "terminate")
+        self.assertIn("errorMessage", restart["injectSteps"][0])
+        self.assertEqual(guard(self.event(self.root / "sample.pdf", conversation=SECOND), self.data, self.root)["decision"], "deny")
+
+    def test_confirmed_native_kill_releases_missing_child_stop_window(self):
+        log, rows = self.delegate()
+        usage, config = Usage(self.data), Metrics()
+        key = (SECOND, 0, 1)
+        owner = (FIRST, 2, fingerprint("turn"), "child")
+        with patch("usage.sample", return_value=(100, 500)):
+            usage.begin(key, owner, config)
+        command = {"step_index": 7, "type": "PLANNER_RESPONSE", "source": "MODEL", "status": "DONE",
+                   "tool_calls": [{"name": "manage_subagents", "args": {"Action": "kill", "ConversationIds": [SECOND]}}]}
+        result = {"step_index": 8, "type": "GENERIC", "source": "MODEL", "status": "DONE",
+                  "content": "Successfully killed 1 subagent(s) and their descendants."}
+        log.write_text("\n".join(map(json.dumps, [*rows, command, {**result, "status": "ERROR"}])), encoding="utf-8")
+        usage.reap(self.root, FIRST)
+        self.assertFalse(usage.closed(SECOND))
+        log.write_text("\n".join(map(json.dumps, [*rows, command, result])), encoding="utf-8")
+        usage.reap(self.root, FIRST)
+        self.assertTrue(usage.closed(SECOND))
+        self.assertEqual(usage.turns(FIRST, [])[0]["child"]["status"], "incomplete")
+        main = (FIRST, 0, 2)
+        with patch("usage.sample", side_effect=[(110, 510), (130, 520)]):
+            usage.begin(main, (FIRST, 3, fingerprint("next"), "main"), config)
+            usage.end(main, None, config)
+        self.assertEqual(usage.turns(FIRST, [])[0]["main"]["bytes"], 20)
+
+    def test_successful_child_read_reconciles_exact_launch_without_copying(self):
+        log, rows = self.delegate(launches=False)
         video = self.root / "素材.mp4"
         with video.open("wb") as stream:
             stream.truncate(50 * 1024 * 1024)
-        for step in (2, 2, 6):
-            record_event(self.event(video, step), self.data)
-        record_event(self.event(video, conversation=SECOND), self.data)
-        entries = self.entries(kind="video")
-        self.assertEqual([(item["turn"], item["sources"]) for item in entries], [(2, 2), (1, 2)])
-        self.assertEqual(entries[0]["id"], entries[1]["id"])
-        self.assertEqual(len(self.entries(SECOND)), 1)
+        event = self.event(video, conversation=SECOND)
+        self.assertEqual(guard(event, self.data, self.root)["decision"], "allow")
+        record_event(event, self.data, self.root)
+        self.assertEqual(self.entries(), [])
+        log.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+        record_event(event, self.data, self.root)
+        item, = self.entries(kind="video")
+        self.assertEqual((item["name"], item["turn"], item["sources"]), (video.name, 2, DELEGATED_READ))
+        self.assertEqual(self.entries(SECOND), [])
         self.assertFalse((self.data / "media").exists())
         with self.archive.connect() as db:
             self.assertEqual(db.execute("SELECT max(length(payload)) FROM attachments").fetchone(), (2,))
-        args = {"action": "open", "scope": fingerprint(FIRST), "id": entries[0]["id"]}
+        args = {"action": "open", "scope": fingerprint(FIRST), "id": item["id"]}
         with patch("panel.os.startfile", create=True) as start:
             self.assertEqual(panel.run(self.archive, args), {"ok": True})
             start.assert_called_once_with(str(video))
             video.unlink()
             self.assertIn("error", panel.run(self.archive, args))
 
-    def test_failed_reads_untrusted_paths_and_non_file_tools_are_ignored(self):
-        pdf = self.root / "document.pdf"
-        pdf.write_bytes(b"test")
-        record_event(self.event(pdf, error="failed"), self.data)
-        record_event(self.event(pdf, toolCall={"name": "run_command", "args": {"Path": str(pdf)}}), self.data)
-        record_event(self.event(Path("relative.pdf")), self.data)
-        shortcut = pdf.with_suffix(".lnk")
-        shortcut.write_bytes(b"test")
-        record_event(self.event(shortcut), self.data)
-        with self.archive.connect() as db:
-            self.assertEqual(self.archive.sessions(db), [])
+    def test_failed_unreserved_main_or_direct_child_prompt_is_not_indexed(self):
+        self.delegate()
+        file = self.root / "example.pdf"
+        file.write_bytes(b"%PDF synthetic")
+        event = self.event(file, conversation=SECOND)
+        record_event(event, self.data, self.root)
+        guard(event, self.data, self.root)
+        record_event({**event, "error": "failed"}, self.data, self.root)
+        record_event(self.event(file), self.data, self.root)
+        self.transcript(SECOND)
+        record_event(event, self.data, self.root)
+        self.assertEqual(self.entries(), [])
+        self.assertEqual(self.entries(SECOND), [])
 
-    def test_hook_uses_stdio_and_supports_documented_event_without_transcript(self):
-        file = self.root / "note.pdf"
-        file.write_bytes(b"test")
-        event = self.event(file, transcriptPath=None, toolCall={"name": "view_file", "args": {"AbsolutePath": str(file)}})
+    def test_launch_parser_rejects_unverified_results(self):
+        _, rows = self.delegate()
+        self.assertEqual(launch_step(rows, SECOND), 4)
+        self.assertEqual(turn_before(rows, 4)[0], 2)
+        for key, value in (("status", "ERROR"), ("source", "USER_EXPLICIT")):
+            altered = [*rows[:3], {**rows[3], key: value}, rows[4]]
+            self.assertIsNone(launch_step(altered, SECOND))
+
+    def test_hook_commands_use_documented_stdio(self):
         env = {**os.environ, "LOCALAPPDATA": str(self.root), "XDG_DATA_HOME": str(self.root)}
-        reply = subprocess.run([sys.executable, str(ROOT / "scripts" / "record_read.py")],
-                               input=json.dumps(event), text=True, env=env, capture_output=True, check=True)
-        self.assertEqual(json.loads(reply.stdout), {})
-        self.assertEqual(reply.stderr, "")
-        recorded = Archive(self.root / "antigravity-context-attachment-manager")
-        with recorded.connect() as db:
-            item, = recorded.entries(db, fingerprint(FIRST), "note", "document", 0)["attachments"]
-            self.assertEqual((item["name"], item["turn"], item["sources"]), (file.name, None, 2))
+        for script, args, event, expected in (
+            ("guard_read.py", [], self.event(self.root / "notes.txt"), {"decision": "allow"}),
+            ("record_read.py", [], self.event(self.root / "note.pdf"), {}),
+            ("track_usage.py", ["stop"], {"conversationId": FIRST, "fullyIdle": True}, {"decision": "stop"}),
+        ):
+            reply = subprocess.run([sys.executable, str(ROOT / "scripts" / script), *args],
+                                   input=json.dumps(event), text=True, env=env, capture_output=True, check=True)
+            self.assertEqual(json.loads(reply.stdout), expected)
+            self.assertEqual(reply.stderr, "")
 
-    def test_hook_maps_full_transcript_and_uses_default_logs_when_omitted(self):
-        first = self.root / "first.md"
-        second = self.root / "second.md"
-        for file in (first, second):
-            file.write_text("synthetic", encoding="utf-8")
-        path = self.transcript()
-        logs = self.root / ".gemini" / "antigravity" / path.relative_to(self.root).parent
-        logs.mkdir(parents=True)
-        full = logs / "transcript_full.jsonl"
-        path.replace(full)
-        record_event(self.event(first, step=2, transcriptPath=str(full)), self.data)
-        with patch("record_read.Path.home", return_value=self.root):
-            record_event(self.event(second, step=6, transcriptPath=None), self.data)
-        self.assertEqual([(item["name"], item["turn"]) for item in self.entries()],
-                         [(second.name, 2), (first.name, 1)])
-
-    def test_legacy_inline_media_preview_and_lazy_migration(self):
-        scope, attachment_id = fingerprint(FIRST), "CAM-" + "a" * 32
-        original = b"legacy-image"
-        data = base64.b64encode(original).decode("ascii")
-        payload = json.dumps({"inlineData": {"mimeType": "image/png", "data": data}})
+    def test_legacy_rows_remain_but_are_not_shown_or_copied(self):
+        scope = fingerprint(FIRST)
         with self.archive.connect() as db:
-            db.execute("INSERT INTO sessions(scope) VALUES (?)", (scope,))
-            db.execute("INSERT INTO attachments(scope,id,name,mime,payload) VALUES (?,?,?,?,?)",
-                       (scope, attachment_id, "legacy.png", "image/png", payload))
-        args = {"scope": scope, "id": attachment_id}
-        self.assertEqual(panel.run(self.archive, {"action": "thumbnail", **args})["data"], data)
-        with patch("panel.os.startfile", create=True) as start:
-            for _ in range(2):
-                self.assertEqual(panel.run(self.archive, {"action": "open", **args}), {"ok": True})
-            opened = [Path(call.args[0]) for call in start.call_args_list]
-            self.assertEqual(opened[0], opened[1])
-            self.assertEqual(opened[0].suffix, ".png")
-            self.assertEqual(opened[0].read_bytes(), original)
-            self.assertEqual(list((self.data / "media").iterdir()), [opened[0]])
-            opened[0].chmod(0o600)
+            self.archive.touch(db, FIRST, 1)
+            db.execute("INSERT INTO attachments VALUES (?, ?, ?, ?, ?)",
+                       (scope, "CAM-" + "f"*32, "old.png", "image/png", b"inline"))
+        self.assertEqual(self.entries(), [])
+        self.assertIn("error", panel.run(self.archive, {"action": "open", "scope": scope, "id": "CAM-" + "f"*32}))
+        with self.archive.connect() as db:
+            self.assertEqual(db.execute("SELECT payload FROM attachments").fetchone(), (b"inline",))
+        self.assertFalse((self.data / "media").exists())
 
-    def test_linked_old_scope_stays_single_and_can_be_selected(self):
+    def test_linked_old_scope_shows_traffic_only_session(self):
         legacy = fingerprint("older-session-id")
         with self.archive.connect() as db:
             db.execute("INSERT INTO sessions(scope,label) VALUES (?,?)", (legacy, "旧会话"))
             self.archive.link_conversations(db, {legacy: FIRST})
-        document = self.root / "sample.pdf"
-        document.write_bytes(b"doc")
-        record_event(self.event(document), self.data)
+        usage, config = Usage(self.data), Metrics()
+        owner = FIRST, 1, fingerprint("turn"), "main"
+        with patch("usage.sample", side_effect=[(110, 100), (130, 120)]):
+            usage.begin((FIRST, 0, 1), owner, config)
+            usage.end((FIRST, 0, 1), owner, config)
         with patch("panel.desktop_selection", return_value=("active", FIRST)), patch("panel.desktop_names", return_value=({}, {})):
             session, = panel.run(self.archive, {"action": "sessions"})["sessions"]
             self.assertEqual((session["scope"], session["label"], session["desktopKey"]), (legacy, "旧会话", fingerprint(FIRST)))
             self.assertNotIn("conversationId", session)
-            self.assertEqual(panel.run(self.archive, {"action": "selection"}),
-                             {"status": "active", "key": session["desktopKey"]})
+            self.assertEqual(session["count"], 0)
+        turn, = panel.run(self.archive, {"action": "traffic", "scope": legacy})["turns"]
+        self.assertEqual(turn["main"]["bytes"], 20)
+        self.assertEqual(turn["child"]["status"], "unobserved")
 
     def test_stdio_exposes_only_panel_tools_and_requires_view_capability(self):
         def rpc(method, **params):

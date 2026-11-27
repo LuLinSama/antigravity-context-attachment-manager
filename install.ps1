@@ -13,7 +13,9 @@ $files = @(
     'plugin.json', 'mcp_config.json', 'hooks.json', 'README.md', 'LICENSE',
     'scripts\record_read.py', 'src\mcp_server.py', 'src\archive.py', 'src\media.py',
     'src\panel.py', 'src\native_state.py', 'src\conversation_names.py',
-    'src\desktop_selection.py', 'src\legacy_timeline.py', 'ui\attachments.html'
+    'src\desktop_selection.py', 'ui\attachments.html',
+    'agents\cam-media.md', 'rules\cam-media.md', 'src\media_delegation.py',
+    'src\hook_event.py', 'src\usage.py', 'scripts\guard_read.py', 'scripts\track_usage.py'
 )
 $pythonExe = & $Python -c 'import sys; assert sys.version_info >= (3, 10); print(sys.executable)'
 if ($LASTEXITCODE -ne 0 -or -not $pythonExe) { throw 'Python 3.10 or newer is required.' }
@@ -65,10 +67,21 @@ $mcpConfig.mcpServers.media.command = $pythonExe
 
 $hooksPath = Join-Path $pluginDir 'hooks.json'
 $hooksConfig = Get-Content -Raw -LiteralPath $hooksPath | ConvertFrom-Json
-$hooksConfig.'cam-file-reads'.PostToolUse[0].hooks[0].command = '"' + $pythonExe + '" ./scripts/record_read.py'
+foreach ($group in $hooksConfig.PSObject.Properties.Value) {
+    foreach ($event in $group.PSObject.Properties) {
+        if ($event.Name -eq 'enabled') { continue }
+        foreach ($entry in $event.Value) {
+            $handlers = if ($entry.hooks) { $entry.hooks } else { $entry }
+            foreach ($handler in $handlers) {
+                if (-not $handler.command.StartsWith('python ')) { throw 'Unexpected hook command.' }
+                $handler.command = '"' + $pythonExe + '" ' + $handler.command.Substring(7)
+            }
+        }
+    }
+}
 [IO.File]::WriteAllText($hooksPath, ($hooksConfig | ConvertTo-Json -Depth 12), $utf8)
 
-foreach ($entry in @('rules\AGENTS.md', 'sidecars\startup\sidecar.json', 'src\proxy.py', 'src\native_startup.py', 'src\desktop.py', 'src\adapter.py', 'src\protocol.py')) {
+foreach ($entry in @('rules\AGENTS.md', 'sidecars\startup\sidecar.json', 'src\proxy.py', 'src\native_startup.py', 'src\desktop.py', 'src\adapter.py', 'src\protocol.py', 'src\legacy_timeline.py')) {
     $staleFile = Join-Path $pluginDir $entry
     if (Test-Path -LiteralPath $staleFile -PathType Leaf) { Remove-Item -LiteralPath $staleFile }
 }

@@ -6,14 +6,14 @@ import os
 import re
 import secrets
 import sqlite3
-import stat
 from pathlib import Path
 
-from archive import PAGE_SIZE
+from archive import PAGE_SIZE, reconcile_reads
 from conversation_names import UUID, desktop_names, fingerprint
 from desktop_selection import desktop_selection, public_selection
-from legacy_timeline import backfill
-from media import EXTENSIONS, INLINE, MIME_BY_EXTENSION, local_path, media_part
+from media_delegation import desktop_data
+from media import DELEGATED_READ, MEDIA_TYPES, local_path
+from usage import Usage, settings
 
 
 URI = "ui://antigravity-context-attachment-manager/attachments.html"
@@ -34,6 +34,7 @@ PANEL_TOOLS = [
             "scope": {"type": "string"}, "id": {"type": "string"},
             "query": {"type": "string"}, "kind": {"type": "string"},
             "offset": {"type": "integer"}, "label": {"type": "string"},
+            "turns": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
         }, "additionalProperties": False},
         "_meta": {
             "ui": {"resourceUri": URI, "visibility": ["app"]},
@@ -68,9 +69,22 @@ def run(archive, args):
         if action == "selection":
             return public_selection(*desktop_selection())
         if action == "sessions":
-            with archive.connect() as db:
-                sessions = archive.sessions(db)
             _, current_id = desktop_selection()
+            app_data = desktop_data()
+            if current_id and UUID.fullmatch(current_id):
+                reconcile_reads(archive, app_data, current_id.lower())
+            usage = Usage(archive.path.parent)
+            if usage.path.is_file():
+                usage.settle(app_data)
+                if current_id and UUID.fullmatch(current_id):
+                    usage.reap(app_data, current_id.lower())
+                timings = usage.sessions()
+            else:
+                timings = []
+            with archive.connect() as db:
+                for owner, started in timings:
+                    archive.touch(db, owner, int(started))
+                sessions = archive.sessions(db)
             names, links = desktop_names(sessions, current_id=current_id)
             if links:
                 with archive.connect() as db:
@@ -79,7 +93,7 @@ def run(archive, args):
                 conversation_id = session.get("conversationId") or links.get(session["scope"])
                 if isinstance(conversation_id, str) and UUID.fullmatch(conversation_id):
                     session["desktopKey"] = fingerprint(conversation_id.lower())
-                for key in ("turn", "promptFingerprint", "conversationId"):
+                for key in ("promptFingerprint", "conversationId"):
                     session.pop(key, None)
                 session.update(names.get(session["scope"], {}))
             return {"online": True, "sessions": sessions}
@@ -99,10 +113,16 @@ def apply_action(archive, db, action, args):
     if action == "entries":
         query, kind, offset = args.get("query", ""), args.get("kind", ""), args.get("offset", 0)
         if isinstance(query, str) and len(query) <= 120 and isinstance(kind, str) and type(offset) is int and 0 <= offset <= 1_000_000:
-            linked = db.execute("SELECT conversation_id FROM session_names WHERE scope=?", (scope,)).fetchone()
-            if linked and offset == 0:
-                backfill(archive, db, scope, linked[0])
             return archive.entries(db, scope, query, kind, offset) | {"pageSize": PAGE_SIZE}
+    if action == "traffic":
+        owner = db.execute("SELECT conversation_id FROM session_names WHERE scope=?", (scope,)).fetchone()
+        usage = Usage(archive.path.parent)
+        config = settings(archive.path.parent)
+        selected = args.get("turns", [])
+        if not isinstance(selected, list) or len(selected) > PAGE_SIZE or any(type(n) is not int or n < 1 or n >= 2**31 for n in selected):
+            return {"error": "无效的轮次。"}
+        return {"turns": usage.turns(owner[0], selected) if owner and usage.path.is_file() else [],
+                "enabled": bool(config and config.enabled), "tag": config.tag if config and config.enabled else None}
     if action == "session":
         label = args.get("label")
         if isinstance(label, str) and len(label) <= 100:
@@ -112,32 +132,19 @@ def apply_action(archive, db, action, args):
     if isinstance(attachment_id, str) and ATTACHMENT_ID.fullmatch(attachment_id):
         local = db.execute("""
             SELECT l.path, a.mime FROM local_files l JOIN attachments a USING (scope, id)
-            WHERE l.scope=? AND l.id=?
-        """, (scope, attachment_id)).fetchone()
+            WHERE l.scope=? AND l.id=? AND EXISTS (
+                SELECT 1 FROM turn_attachments u WHERE u.scope=l.scope AND u.id=l.id AND (u.sources & ?)<>0
+            )
+        """, (scope, attachment_id, DELEGATED_READ)).fetchone()
         if local is not None and action in ("open", "thumbnail"):
             return local_preview(*local, action)
-        if action == "open":
-            return open_attachment(archive, db, scope, attachment_id)
-        if action == "thumbnail":
-            info = db.execute("""
-                SELECT mime, file_size, length(payload) FROM attachments WHERE scope=? AND id=?
-            """, (scope, attachment_id)).fetchone()
-            if info is None:
-                return {"available": False}
-            mime, file_size, payload_size = info
-            too_large = (file_size > MAX_THUMBNAIL if file_size is not None
-                         else payload_size > MAX_THUMBNAIL * 4 // 3 + 4096)
-            if mime.lower() not in THUMBNAIL_MIMES or too_large:
-                return {"available": False}
-            record = archive.load(db, scope, attachment_id)
-            return thumbnail(record) if record else {"available": False}
     return {"error": "素材操作无效，或素材已不在该会话的档案中。"}
 
 
 def local_preview(value, mime, action):
     path = local_path(value)
     # Accept the same canonical path and an explicitly supported association.
-    if (path is None or MIME_BY_EXTENSION.get(path.suffix.lower()) != mime
+    if (path is None or MEDIA_TYPES.get(path.suffix.lower()) != mime
             or not path.is_file() or path.resolve() != path):
         return {"available": False} if action == "thumbnail" else {"error": "所引用的原文件已移动或删除。"}
     if action == "open":
@@ -152,40 +159,3 @@ def local_preview(value, mime, action):
     if not data or len(data) > MAX_THUMBNAIL:
         return {"available": False}
     return {"available": True, "mimeType": mime, "data": base64.b64encode(data).decode("ascii")}
-
-
-def thumbnail(record):
-    _, mime, part = record
-    media = media_part(part)
-    if media is None or media[0] not in INLINE:
-        return {"available": False}
-    data = media[1]["data"]
-    if len(data) > MAX_THUMBNAIL * 4 // 3 + 4 or not re.fullmatch(r"[a-zA-Z0-9+/]+={0,2}", data):
-        return {"available": False}
-    return {"available": True, "mimeType": mime.lower(), "data": data}
-
-
-def open_attachment(archive, db, scope, attachment_id):
-    row = db.execute("SELECT mime, file_digest FROM attachments WHERE scope=? AND id=?",
-                     (scope, attachment_id)).fetchone()
-    if row is None:
-        return {"error": "找不到该素材。"}
-    mime, digest = row
-    if mime.lower() not in EXTENSIONS:
-        return {"error": "此文件格式暂不支持从素材库打开。"}
-    if not hasattr(os, "startfile"):
-        return {"error": "此功能需要 Windows 默认应用。"}
-    try:
-        if digest is None:
-            digest = archive.migrate_original(db, scope, attachment_id)
-            if digest is None:
-                return {"error": "没有可在 Windows 打开的本地原件。素材可能是服务端引用或已损坏。"}
-            db.commit()
-        path = archive.original_path(mime, digest)
-        if not path.is_file():
-            return {"error": "本地归档文件已丢失。"}
-        path.chmod(stat.S_IREAD)
-        os.startfile(str(path))
-    except (OSError, ValueError):
-        return {"error": "Windows 无法打开此素材。请检查归档文件和默认应用。"}
-    return {"ok": True}

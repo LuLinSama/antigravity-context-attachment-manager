@@ -2,6 +2,6 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "antigravity-context-attachment-manager",
   "displayName": "Context Attachment Manager",
-  "description": "Browse files read by Antigravity and open them in Windows.",
-  "version": "0.4.0"
+  "description": "Isolate native Antigravity media reads and observe local uplink counters.",
+  "version": "0.5.0"
 }
