@@ -14,10 +14,9 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts")]
 import mcp_server
 import panel
 from archive import Archive
-from conversation_names import fingerprint
+from conversation_names import desktop_names, fingerprint
 from desktop_selection import selection_from_targets
-from media import DELEGATED_READ
-from media_delegation import launch_step, turn_before
+from transcript_index import delegated_turn
 from guard_read import guard
 from record_read import record_event
 from usage import Metrics, Usage
@@ -142,10 +141,11 @@ class NativeLibraryTests(unittest.TestCase):
         log.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
         record_event(event, self.data, self.root)
         item, = self.entries(kind="video")
-        self.assertEqual((item["name"], item["turn"], item["sources"]), (video.name, 2, DELEGATED_READ))
+        self.assertEqual((item["name"], item["turn"]), (video.name, 2))
         self.assertEqual(self.entries(SECOND), [])
         self.assertFalse((self.data / "media").exists())
         with self.archive.connect() as db:
+            self.assertEqual(db.execute("SELECT path FROM local_files").fetchone(), (str(video),))
             self.assertEqual(db.execute("SELECT max(length(payload)) FROM attachments").fetchone(), (2,))
         args = {"action": "open", "scope": fingerprint(FIRST), "id": item["id"]}
         with patch("panel.os.startfile", create=True) as start:
@@ -169,12 +169,12 @@ class NativeLibraryTests(unittest.TestCase):
         self.assertEqual(self.entries(SECOND), [])
 
     def test_launch_parser_rejects_unverified_results(self):
-        _, rows = self.delegate()
-        self.assertEqual(launch_step(rows, SECOND), 4)
-        self.assertEqual(turn_before(rows, 4)[0], 2)
+        log, rows = self.delegate()
+        self.assertEqual(delegated_turn(self.root, FIRST, SECOND, directory=self.data)[0], 2)
         for key, value in (("status", "ERROR"), ("source", "USER_EXPLICIT")):
             altered = [*rows[:3], {**rows[3], key: value}, rows[4]]
-            self.assertIsNone(launch_step(altered, SECOND))
+            log.write_text("\n".join(map(json.dumps, altered)), encoding="utf-8")
+            self.assertIsNone(delegated_turn(self.root, FIRST, SECOND, directory=self.data))
 
     def test_hook_commands_use_documented_stdio(self):
         env = {**os.environ, "LOCALAPPDATA": str(self.root), "XDG_DATA_HOME": str(self.root)}
@@ -190,34 +190,117 @@ class NativeLibraryTests(unittest.TestCase):
 
     def test_legacy_rows_remain_but_are_not_shown_or_copied(self):
         scope = fingerprint(FIRST)
+        old_id = "CAM-" + "f" * 32
         with self.archive.connect() as db:
             self.archive.touch(db, FIRST, 1)
             db.execute("INSERT INTO attachments VALUES (?, ?, ?, ?, ?)",
-                       (scope, "CAM-" + "f"*32, "old.png", "image/png", b"inline"))
+                       (scope, old_id, "old.png", "image/png", b"inline"))
+            db.execute("INSERT INTO local_files VALUES (?, ?, ?)", (scope, old_id, str(self.root / "old.png")))
+            db.execute("INSERT INTO turns VALUES (?, ?, ?)", (scope, "old-turn", 1))
+            db.execute("INSERT INTO turn_attachments VALUES (?, ?, ?, ?)", (scope, "old-turn", old_id, 2))
         self.assertEqual(self.entries(), [])
-        self.assertIn("error", panel.run(self.archive, {"action": "open", "scope": scope, "id": "CAM-" + "f"*32}))
+        self.assertIn("error", panel.run(self.archive, {"action": "open", "scope": scope, "id": old_id}))
+        self.assertEqual(panel.run(self.archive, {"action": "sessions"})["sessions"], [])
         with self.archive.connect() as db:
             self.assertEqual(db.execute("SELECT payload FROM attachments").fetchone(), (b"inline",))
         self.assertFalse((self.data / "media").exists())
 
-    def test_linked_old_scope_shows_traffic_only_session(self):
+    def test_traffic_uses_the_native_scope_not_a_legacy_mapping(self):
         legacy = fingerprint("older-session-id")
+        scope = fingerprint(FIRST)
         with self.archive.connect() as db:
             db.execute("INSERT INTO sessions(scope,label) VALUES (?,?)", (legacy, "旧会话"))
-            self.archive.link_conversations(db, {legacy: FIRST})
+            db.execute("INSERT INTO session_names(scope, conversation_id) VALUES (?, ?)", (legacy, FIRST))
         usage, config = Usage(self.data), Metrics()
         owner = FIRST, 1, fingerprint("turn"), "main"
         with patch("usage.sample", side_effect=[(110, 100), (130, 120)]):
             usage.begin((FIRST, 0, 1), owner, config)
             usage.end((FIRST, 0, 1), owner, config)
-        with patch("panel.desktop_selection", return_value=("active", FIRST)), patch("panel.desktop_names", return_value=({}, {})):
+        with patch("panel.desktop_selection", return_value=("active", FIRST)), patch("panel.desktop_names", return_value={}):
             session, = panel.run(self.archive, {"action": "sessions"})["sessions"]
-            self.assertEqual((session["scope"], session["label"], session["desktopKey"]), (legacy, "旧会话", fingerprint(FIRST)))
+            self.assertEqual((session["scope"], session["label"]), (scope, ""))
             self.assertNotIn("conversationId", session)
             self.assertEqual(session["count"], 0)
-        turn, = panel.run(self.archive, {"action": "traffic", "scope": legacy})["turns"]
+        turn, = panel.run(self.archive, {"action": "traffic", "scope": scope})["turns"]
         self.assertEqual(turn["main"]["bytes"], 20)
         self.assertEqual(turn["child"]["status"], "unobserved")
+        self.assertIn("error", panel.run(self.archive, {"action": "traffic", "scope": legacy}))
+
+    def test_delete_clears_only_cam_archive_and_blocks_stale_observations(self):
+        with patch("panel.desktop_selection", return_value=("none", None)), patch("panel.desktop_names", return_value={}):
+            original = self.root / "original.png"
+            original.write_bytes(b"media")
+            native_log = self.transcript()
+            transcript = native_log.read_bytes()
+            scope, other_scope = fingerprint(FIRST), fingerprint(SECOND)
+            old_turn = (1, fingerprint("old turn"))
+            new_turn = (2, fingerprint("new turn"))
+            with self.archive.connect() as db:
+                for owner in (FIRST, SECOND):
+                    self.archive.reference(db, owner, original, "image/png", old_turn, 10)
+                db.execute("UPDATE sessions SET label='旧别名' WHERE scope=?", (scope,))
+            self.archive.queue_read(SECOND, FIRST, original, "image/png", 11)
+            usage, config = Usage(self.data), Metrics()
+            main = (FIRST, *old_turn, "main")
+            child = (FIRST, *old_turn, "child")
+            other = (SECOND, *old_turn, "main")
+            with patch("usage.sample", return_value=(100, None)), patch("usage.time.time", return_value=20):
+                usage.begin((FIRST, 0, 1), main, config)
+                usage.end((FIRST, 0, 1), main, config)
+                usage.begin((SECOND, 0, 1), other, config)
+                usage.end((SECOND, 0, 1), other, config)
+                usage.begin((FIRST, 1, 2), main, config)
+                usage.begin((SECOND, 1, 2), None, config)
+
+            args = {"action": "delete_session", "scope": scope}
+            envelope = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
+            with patch("mcp_server.archive", return_value=self.archive):
+                rpc = {**envelope, "params": {"name": panel.OPEN_PANEL, "arguments": args}}
+                self.assertTrue(mcp_server.dispatch(rpc)["result"]["isError"])
+                self.assertTrue(self.entries())
+                with patch("panel.time.time", return_value=30):
+                    args["capability"] = panel.CAPABILITY
+                    self.assertEqual(mcp_server.dispatch(rpc)["result"]["structuredContent"], {"ok": True})
+            with self.archive.connect() as db:
+                for table in ("sessions", "session_names", "attachments", "local_files", "turn_attachments", "turns"):
+                    self.assertIsNone(db.execute(f"SELECT 1 FROM {table} WHERE scope=?", (scope,)).fetchone(), table)
+                self.assertIsNone(db.execute("SELECT 1 FROM pending_reads WHERE parent=?", (FIRST,)).fetchone())
+                self.assertFalse(self.archive.reference(db, FIRST, original, "image/png", old_turn, 25))
+            self.archive.queue_read(SECOND, FIRST, original, "image/png", 25)
+            usage.end((FIRST, 1, 2), main, config)
+            usage.end((SECOND, 1, 2), child, config)
+            self.assertFalse(usage.turns(FIRST, []))
+            self.assertTrue(usage.turns(SECOND, []))
+            self.assertEqual([item["scope"] for item in panel.run(self.archive, {"action": "sessions"})["sessions"]], [other_scope])
+            self.assertEqual(original.read_bytes(), b"media")
+            self.assertEqual(native_log.read_bytes(), transcript)
+
+            with self.archive.connect() as db:
+                self.assertTrue(self.archive.reference(db, FIRST, original, "image/png", new_turn, 40))
+                self.assertIsNone(db.execute("SELECT 1 FROM pending_reads WHERE parent=?", (FIRST,)).fetchone())
+            with patch("usage.sample", return_value=(100, None)), patch("usage.time.time", return_value=40):
+                new_owner = (FIRST, *new_turn, "main")
+                usage.begin((FIRST, 2, 3), new_owner, config)
+                usage.end((FIRST, 2, 3), new_owner, config)
+            turns = usage.turns(FIRST, [1])
+            self.assertEqual([turn["turn"] for turn in turns], [2])
+            self.assertEqual(self.entries()[0]["turn"], 2)
+            self.assertEqual(len(self.entries(SECOND)), 1)
+
+    def test_titles_resolve_by_known_native_conversation_ids(self):
+        gemini = self.root / ".gemini"
+        catalogue = gemini / "antigravity" / "conversation_summaries.db"
+        catalogue.parent.mkdir(parents=True)
+        db = sqlite3.connect(catalogue)
+        with db:
+            db.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title, project_id, workspace_uris)")
+            db.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?, ?)",
+                       (FIRST, "Native title", None, '["file:///workspace/example"]'))
+        db.close()
+        scope = fingerprint(FIRST)
+        sessions = [{"scope": scope, "conversationId": FIRST},
+                    {"scope": fingerprint(SECOND), "conversationId": SECOND}]
+        self.assertEqual(desktop_names(sessions, gemini), {scope: {"title": "Native title", "project": "example"}})
 
     def test_stdio_exposes_only_panel_tools_and_requires_view_capability(self):
         def rpc(method, **params):
@@ -247,6 +330,21 @@ class NativeLibraryTests(unittest.TestCase):
         self.assertEqual(selection_from_targets([page(f"/c/{FIRST}")]), ("active", FIRST))
         self.assertEqual(selection_from_targets([page(f"/c/{SECOND}")]), ("active", SECOND))
         self.assertEqual(selection_from_targets([page(f"/c/{FIRST}"), page(f"/c/{SECOND}")]), ("unavailable", None))
+
+    def test_native_selection_keys_match_existing_media_sessions(self):
+        with self.archive.connect() as db:
+            for cid in (FIRST, SECOND):
+                self.assertTrue(self.archive.reference(db, cid, self.root / "file.pdf", "application/pdf",
+                                                       (1, fingerprint("turn")), 1))
+        library = Archive(self.data)
+        with patch("panel.desktop_names", return_value={}):
+            sessions = panel.run(library, {"action": "sessions"})["sessions"]
+        for cid in (FIRST, SECOND):
+            with patch("panel.desktop_selection", return_value=("active", cid)):
+                selection = panel.run(library, {"action": "selection"})
+            session, = (session for session in sessions if session["scope"] == selection["key"])
+            self.assertEqual(session["count"], 1)
+            self.assertNotIn("conversationId", session)
 
 
 if __name__ == "__main__":

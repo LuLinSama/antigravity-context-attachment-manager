@@ -15,7 +15,7 @@ $files = @(
     'src\panel.py', 'src\native_state.py', 'src\conversation_names.py',
     'src\desktop_selection.py', 'ui\attachments.html',
     'agents\cam-media.md', 'rules\cam-media.md', 'src\media_delegation.py',
-    'src\hook_event.py', 'src\usage.py', 'scripts\guard_read.py', 'scripts\track_usage.py'
+    'src\hook_event.py', 'src\usage.py', 'src\transcript_index.py', 'scripts\guard_read.py', 'scripts\track_usage.py'
 )
 $pythonExe = & $Python -c 'import sys; assert sys.version_info >= (3, 10); print(sys.executable)'
 if ($LASTEXITCODE -ne 0 -or -not $pythonExe) { throw 'Python 3.10 or newer is required.' }
@@ -38,14 +38,6 @@ if ($Global) {
         $config.plugins | Add-Member -NotePropertyName $pluginName -NotePropertyValue ([pscustomobject]@{}) -Force
     }
     $config.plugins.$pluginName | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force
-    $oldStartup = "$pluginName/startup"
-    if ($config.sidecars -and $config.sidecars.PSObject.Properties[$oldStartup]) {
-        $config.sidecars.PSObject.Properties.Remove($oldStartup)
-    }
-    $shortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Antigravity.lnk'
-    if (Test-Path -LiteralPath $shortcut -PathType Leaf) {
-        & (Join-Path $PSScriptRoot 'configure-shortcut.ps1') -Shortcut $shortcut -Disable
-    }
 } else {
     $workspacePath = (Resolve-Path -LiteralPath $Workspace).ProviderPath
     if (-not (Test-Path -LiteralPath $workspacePath -PathType Container)) {
@@ -81,12 +73,8 @@ foreach ($group in $hooksConfig.PSObject.Properties.Value) {
 }
 [IO.File]::WriteAllText($hooksPath, ($hooksConfig | ConvertTo-Json -Depth 12), $utf8)
 
-foreach ($entry in @('rules\AGENTS.md', 'sidecars\startup\sidecar.json', 'src\proxy.py', 'src\native_startup.py', 'src\desktop.py', 'src\adapter.py', 'src\protocol.py', 'src\legacy_timeline.py')) {
-    $staleFile = Join-Path $pluginDir $entry
-    if (Test-Path -LiteralPath $staleFile -PathType Leaf) { Remove-Item -LiteralPath $staleFile }
-}
-
 if ($Global) {
+    # Replace the shared config atomically so an interrupted write cannot truncate it.
     $temp = Join-Path $configRoot ('.cam-' + [Guid]::NewGuid() + '.tmp')
     try {
         [IO.File]::WriteAllText($temp, ($config | ConvertTo-Json -Depth 100), $utf8)

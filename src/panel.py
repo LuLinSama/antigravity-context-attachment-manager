@@ -6,14 +6,15 @@ import os
 import re
 import secrets
 import sqlite3
+import time
 from pathlib import Path
 
 from archive import PAGE_SIZE, reconcile_reads
 from conversation_names import UUID, desktop_names, fingerprint
 from desktop_selection import desktop_selection, public_selection
-from media_delegation import desktop_data
-from media import DELEGATED_READ, MEDIA_TYPES, local_path
-from usage import Usage, settings
+from media_delegation import CAM_MEDIA, conversation_identity, desktop_data
+from media import DELEGATED_READ, MEDIA_TYPES, local_path, source_file
+from usage import MODES, Usage, settings
 
 
 URI = "ui://antigravity-context-attachment-manager/attachments.html"
@@ -32,6 +33,7 @@ PANEL_TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string"}, "capability": {"type": "string"},
             "scope": {"type": "string"}, "id": {"type": "string"},
+            "mode": {"type": "string", "enum": list(MODES)}, "path": {"type": "string", "maxLength": 32767},
             "query": {"type": "string"}, "kind": {"type": "string"},
             "offset": {"type": "integer"}, "label": {"type": "string"},
             "turns": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
@@ -68,12 +70,20 @@ def run(archive, args):
         action = args.get("action")
         if action == "selection":
             return public_selection(*desktop_selection())
+        usage = Usage(archive.path.parent)
+        if action == "set_mode":
+            mode = args.get("mode")
+            if mode not in MODES:
+                return {"error": "无效的读取模式。"}
+            usage.set_mode(mode)
+            return usage.policy()
+        if action in ("policy", "grant", "revoke"):
+            return media_policy(usage, action, args)
         if action == "sessions":
             _, current_id = desktop_selection()
             app_data = desktop_data()
             if current_id and UUID.fullmatch(current_id):
                 reconcile_reads(archive, app_data, current_id.lower())
-            usage = Usage(archive.path.parent)
             if usage.path.is_file():
                 usage.settle(app_data)
                 if current_id and UUID.fullmatch(current_id):
@@ -83,18 +93,11 @@ def run(archive, args):
                 timings = []
             with archive.connect() as db:
                 for owner, started in timings:
-                    archive.touch(db, owner, int(started))
-                sessions = archive.sessions(db)
-            names, links = desktop_names(sessions, current_id=current_id)
-            if links:
-                with archive.connect() as db:
-                    archive.link_conversations(db, links)
+                    archive.touch(db, owner, started)
+                sessions = archive.sessions(db, {owner for owner, _ in timings})
+            names = desktop_names(sessions)
             for session in sessions:
-                conversation_id = session.get("conversationId") or links.get(session["scope"])
-                if isinstance(conversation_id, str) and UUID.fullmatch(conversation_id):
-                    session["desktopKey"] = fingerprint(conversation_id.lower())
-                for key in ("promptFingerprint", "conversationId"):
-                    session.pop(key, None)
+                del session["conversationId"]
                 session.update(names.get(session["scope"], {}))
             return {"online": True, "sessions": sessions}
         with archive.connect() as db:
@@ -103,26 +106,65 @@ def run(archive, args):
         return {"error": "无法读取本机素材库，请重试。"}
 
 
+def media_policy(usage, action, args):
+    status, current = desktop_selection()
+    owner = current.lower() if status == "active" and current and UUID.fullmatch(current) else None
+    if action == "policy":
+        return usage.policy(owner) | {"scope": fingerprint(owner) if owner else None}
+    if not owner or args.get("scope") != fingerprint(owner):
+        return {"error": "请先切换到要临时放行的 Antigravity 主会话，再试一次。"}
+    if action == "revoke":
+        usage.revoke(owner)
+        return usage.policy(owner) | {"scope": fingerprint(owner)}
+    identity = conversation_identity(desktop_data(), owner)
+    if identity is None or identity[0] == CAM_MEDIA or identity[1]:
+        return {"error": "还无法确认当前是主会话。请先发送一条纯文字消息，再试一次。"}
+    source = source_file(args.get("path"))
+    if source is None:
+        return {"error": "请填写仍存在且受支持的本机媒体原件的绝对路径。"}
+    expires = usage.grant(owner, source[0])
+    if expires is None:
+        return {"error": "请先切换到省流模式。"}
+    return {"mode": "save", "grantUntil": expires, "scope": fingerprint(owner)}
+
+
+def archived_file(db, scope, attachment_id):
+    return db.execute("""
+        SELECT l.path, a.mime FROM local_files l JOIN attachments a USING (scope, id)
+        WHERE l.scope=? AND l.id=? AND EXISTS (
+            SELECT 1 FROM turn_attachments u WHERE u.scope=l.scope AND u.id=l.id AND (u.sources & ?)<>0
+        )
+    """, (scope, attachment_id, DELEGATED_READ)).fetchone()
+
+
 def apply_action(archive, db, action, args):
     scope = args.get("scope")
     if not isinstance(scope, str) or not re.fullmatch(r"[0-9a-f]{64}", scope):
         return {"error": "请选择一个会话。"}
-    session = db.execute("SELECT 1 FROM sessions WHERE scope=?", (scope,)).fetchone()
-    if session is None:
+    if action == "delete_session":
+        db.execute("BEGIN IMMEDIATE")
+    owner = archive.owner(db, scope)
+    if owner is None:
         return {"error": "这个会话已无法读取，请刷新。"}
+    if action == "delete_session":
+        deleted_at = time.time()
+        archive.clear(db, scope, owner, deleted_at)
+        usage = Usage(archive.path.parent)
+        if usage.path.is_file():
+            usage.clear(owner, deleted_at)
+        return {"ok": True}
     if action == "entries":
         query, kind, offset = args.get("query", ""), args.get("kind", ""), args.get("offset", 0)
         if isinstance(query, str) and len(query) <= 120 and isinstance(kind, str) and type(offset) is int and 0 <= offset <= 1_000_000:
             return archive.entries(db, scope, query, kind, offset) | {"pageSize": PAGE_SIZE}
     if action == "traffic":
-        owner = db.execute("SELECT conversation_id FROM session_names WHERE scope=?", (scope,)).fetchone()
         usage = Usage(archive.path.parent)
         config = settings(archive.path.parent)
         selected = args.get("turns", [])
         if not isinstance(selected, list) or len(selected) > PAGE_SIZE or any(type(n) is not int or n < 1 or n >= 2**31 for n in selected):
             return {"error": "无效的轮次。"}
-        return {"turns": usage.turns(owner[0], selected) if owner and usage.path.is_file() else [],
-                "enabled": bool(config and config.enabled), "tag": config.tag if config and config.enabled else None}
+        return {"turns": usage.turns(owner, selected) if usage.path.is_file() else [],
+                "enabled": bool(config and config.enabled)}
     if action == "session":
         label = args.get("label")
         if isinstance(label, str) and len(label) <= 100:
@@ -130,12 +172,7 @@ def apply_action(archive, db, action, args):
             return {"ok": True}
     attachment_id = args.get("id")
     if isinstance(attachment_id, str) and ATTACHMENT_ID.fullmatch(attachment_id):
-        local = db.execute("""
-            SELECT l.path, a.mime FROM local_files l JOIN attachments a USING (scope, id)
-            WHERE l.scope=? AND l.id=? AND EXISTS (
-                SELECT 1 FROM turn_attachments u WHERE u.scope=l.scope AND u.id=l.id AND (u.sources & ?)<>0
-            )
-        """, (scope, attachment_id, DELEGATED_READ)).fetchone()
+        local = archived_file(db, scope, attachment_id)
         if local is not None and action in ("open", "thumbnail"):
             return local_preview(*local, action)
     return {"error": "素材操作无效，或素材已不在该会话的档案中。"}

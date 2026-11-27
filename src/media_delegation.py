@@ -6,32 +6,13 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from conversation_names import UUID, fingerprint, prompt_fingerprint
+from conversation_names import UUID
 
 
-MAX_TRANSCRIPT = 8 * 1024 * 1024
 LOG_NAMES = ("transcript_full.jsonl", "transcript.jsonl")
 CAM_MEDIA = "cam-media"
+NATIVE_PROMPT = re.compile(r"<ADDITIONAL_METADATA>\s*The current local time is: \d{4}-\d\d-\d\dT")
 LAUNCH_RESULT = re.compile(r"^Created the following subagent:[ \t]*\r?\n", re.M)
-
-
-def transcript_rows(path):
-    try:
-        if path.resolve(strict=True) != path or path.stat().st_size > MAX_TRANSCRIPT:
-            return
-        with path.open("rb") as stream:
-            raw = stream.read(MAX_TRANSCRIPT + 1)
-    except OSError:
-        return
-    if len(raw) > MAX_TRANSCRIPT:
-        return
-    for line in raw.splitlines():
-        try:
-            row = json.loads(line)
-        except (ValueError, RecursionError):
-            continue
-        if isinstance(row, dict):
-            yield row
 
 
 def transcript_paths(app_data, conversation_id):
@@ -54,7 +35,9 @@ def conversation_identity(app_data, child):
     if result is None:
         return None
     agent, parent = result
-    parent = parent.lower() if isinstance(parent, str) and UUID.fullmatch(parent) and parent.lower() != child else None
+    if parent not in (None, "") and (not isinstance(parent, str) or not UUID.fullmatch(parent) or parent.lower() == child):
+        return None
+    parent = parent.lower() if parent else None
     return agent, parent
 
 
@@ -95,85 +78,8 @@ def is_cam_launch(call):
     )
 
 
-def launch_step(rows, child):
-    """Find the invocation that created this exact child; never infer by time."""
-    launch = None
-    for row in rows:
-        index = row.get("step_index")
-        if type(index) is not int or index < 0:
-            continue
-        if row.get("type") == "USER_INPUT":
-            launch = None
-        if row.get("source") != "MODEL" or row.get("status") != "DONE":
-            continue
-        if row.get("type") == "PLANNER_RESPONSE":
-            tools = row.get("tool_calls")
-            launch = index if isinstance(tools, list) and any(map(is_cam_launch, tools)) else None
-        elif row.get("type") == "GENERIC" and launch is not None and index > launch:
-            if child in launch_ids(row.get("content")):
-                return launch
-    return None
-
-
 def desktop_data():
     return Path.home() / ".gemini" / "antigravity"
-
-
-
-def turn_before(rows, step=None):
-    number, anchor, key = 0, -1, None
-    for row in rows:
-        if row.get("type") != "USER_INPUT":
-            continue
-        index = row.get("step_index")
-        if type(index) is not int or index < 0 or (step is not None and index >= step):
-            continue
-        if index <= anchor:
-            return None
-        number, anchor = number + 1, index
-        text = row.get("content")
-        key = prompt_fingerprint(text.strip()) if isinstance(text, str) else None
-    return (number, key or fingerprint(f"native-turn:{anchor}")) if number else None
-
-
-def user_turn(app_data, conversation, step=None):
-    for log in transcript_paths(app_data, conversation):
-        turn = turn_before(transcript_rows(log), step)
-        if turn is not None:
-            return turn
-    return None
-
-
-def delegated_turn(app_data, parent, child):
-    for log in transcript_paths(app_data, parent):
-        rows = list(transcript_rows(log))
-        launch = launch_step(rows, child)
-        if launch is not None:
-            turn = turn_before(rows, launch)
-            if turn is not None:
-                return turn
-    return None
-
-
-def confirmed_kills(rows):
-    """Recover exact native kills when a forced termination emits no child Stop hook."""
-    targets = ()
-    for row in rows:
-        if row.get("type") in ("PLANNER_RESPONSE", "USER_INPUT"):
-            targets = ()
-        if row.get("source") != "MODEL" or row.get("status") != "DONE":
-            continue
-        if row.get("type") == "PLANNER_RESPONSE":
-            calls = row.get("tool_calls")
-            if not isinstance(calls, list) or len(calls) != 1 or not isinstance(calls[0], dict):
-                continue
-            if calls[0].get("name") == "manage_subagents":
-                targets = kill_targets(calls[0].get("args"))
-        elif row.get("type") == "GENERIC" and targets:
-            content = row.get("content")
-            if isinstance(content, str) and f"Successfully killed {len(targets)} subagent(s) and their descendants." in content.splitlines():
-                yield from targets
-            targets = ()
 
 
 def kill_targets(args):

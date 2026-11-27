@@ -5,19 +5,40 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>上下文素材</title>
 <style>
-:root{color-scheme:light dark;--paper:#f7f8fb;--surface:#fff;--ink:#182336;--muted:#536581;--line:#dbe3ef;--accent:#315cc9;--tint:#eaf0ff;--on-accent:#fff;--good:#157754;--warn:#a05023;--radius:13px;font:14px/1.45 system-ui,"Microsoft YaHei UI",sans-serif}
-:root[data-theme=dark]{--paper:#141923;--surface:#1c2431;--ink:#e9eef8;--muted:#a8b6cd;--line:#334155;--accent:#a6bbff;--tint:#253455;--on-accent:#13244d;--good:#8de3bb;--warn:#ffc198}
+:root{
+  color-scheme:light;--fallback-surface:#fff;--fallback-ink:#202124;--fallback-muted:#5f6368;
+  --fallback-line:#dadce0;--fallback-accent:#1967d2;--fallback-tint:#f1f3f4;--fallback-on-accent:#fff;
+  --fallback-danger:#b3261e;--good:#147550;--radius:12px;
+  --paper:var(--sidebar-background,var(--background,var(--color-background-primary,transparent)));
+  --surface:var(--card,var(--color-background-primary,var(--fallback-surface)));
+  --ink:var(--foreground,var(--color-text-primary,var(--fallback-ink)));
+  --muted:var(--muted-foreground,var(--color-text-secondary,var(--fallback-muted)));
+  --line:var(--border,var(--color-border-primary,var(--fallback-line)));
+  --accent:var(--primary,var(--color-ring-primary,var(--fallback-accent)));
+  --tint:var(--sidebar-muted,var(--secondary,var(--color-background-secondary,var(--fallback-tint))));
+  --on-accent:var(--primary-foreground,var(--color-text-inverse,var(--fallback-on-accent)));
+  --danger:var(--destructive,var(--color-text-danger,var(--fallback-danger)));--warn:var(--danger);
+  font:14px/1.45 system-ui,"Microsoft YaHei UI",sans-serif
+}
+:root[data-theme=dark]{
+  color-scheme:dark;--fallback-surface:#202124;--fallback-ink:#e8eaed;--fallback-muted:#bdc1c6;
+  --fallback-line:#414448;--fallback-accent:#8ab4f8;--fallback-tint:#292a2d;--fallback-on-accent:#202124;
+  --fallback-danger:#f5a6a1;--good:#81c995
+}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer}button:disabled{opacity:.48;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}[hidden]{display:none!important}
 main{max-width:1060px;margin:auto;padding:20px clamp(12px,3vw,32px) 24px}.heading{display:flex;align-items:center;gap:10px;padding:0 0 16px}.mark{height:34px;width:34px;display:grid;place-items:center;border-radius:9px;background:var(--tint);color:var(--accent);font-weight:800;font-size:19px;flex:none}h1{margin:0;font-size:19px;letter-spacing:.025em}.heading button{margin-left:auto}.dot{width:8px;height:8px;border-radius:100%;background:currentColor;display:inline-block}.connection{font-size:11px;font-weight:650;color:var(--muted);display:flex;align-items:center;gap:5px;white-space:nowrap}.connection.online{color:var(--good)}
-.box{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px;margin-bottom:12px}.stack{display:grid;gap:5px;min-width:0}.stack>span,.field-label{color:var(--muted);font-size:11px;font-weight:650}.stack select,.stack input,.stack textarea,.search input{width:100%;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-height:34px}.rename{display:flex;gap:6px;margin-top:8px}.rename input{flex:1;min-width:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.btn{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 9px;white-space:nowrap;font-size:12px;min-height:30px}.btn:hover:not(:disabled),.chip:hover{background:var(--tint);border-color:var(--accent)}.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:700}.btn.active,.chip[aria-pressed=true]{background:var(--tint);color:var(--accent);border-color:var(--accent)}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px;margin-bottom:12px}.stack{display:grid;gap:5px;min-width:0}.stack>span,.field-label{color:var(--muted);font-size:11px;font-weight:650}.stack select,.stack input,.stack textarea,.search input{width:100%;background:var(--tint);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-height:34px}.rename{display:flex;gap:6px;margin-top:8px}.rename input{flex:1;min-width:0;background:var(--tint);border:1px solid var(--line);border-radius:8px;padding:6px 8px}.btn{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 9px;white-space:nowrap;font-size:12px;min-height:30px}.btn:hover:not(:disabled),.chip:hover{background:var(--tint);border-color:var(--accent)}.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:700}.btn.active,.chip[aria-pressed=true]{background:var(--tint);color:var(--accent);border-color:var(--accent)}
 .section-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:18px 0 9px}h2{font-size:15px;margin:0}.muted{color:var(--muted);font-size:12px}.search{margin-bottom:8px}.filters{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 9px;font-size:11px;cursor:pointer}.pager{display:flex;justify-content:center;align-items:center;gap:9px;padding:12px}.empty{padding:22px 10px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:var(--radius);font-size:13px}.notice{color:var(--warn);margin:0 0 9px;font-size:12px;overflow-wrap:anywhere}.notice.success{color:var(--good)}
 @media(max-width:360px){.heading{gap:6px}.heading .connection{font-size:10px}}
-.session-field{grid-column:1/-1}.session-field select{text-overflow:ellipsis}.session-note{margin:6px 0 0}#controls{margin-top:10px}
+.session-row{display:flex;align-items:end;gap:8px}.session-field{flex:1;min-width:0}.session-field select{text-overflow:ellipsis}
+.session-note{margin:6px 0 0;overflow-wrap:anywhere}.btn.danger{color:var(--danger)}.btn.danger:hover:not(:disabled){border-color:var(--danger)}
+.delete-dialog{box-sizing:border-box;width:min(380px,calc(100% - 24px));max-width:none;padding:16px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius)}
+.delete-dialog::backdrop{background:rgb(0 0 0 / .40)}.delete-dialog p{margin:8px 0;overflow-wrap:anywhere}.delete-dialog-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:14px}
 #grid{display:grid;gap:16px}
 .turn{min-width:0}
 .turn-heading{display:flex;flex-wrap:wrap;gap:3px 9px;align-items:baseline;margin:0 0 8px;color:var(--muted);font-size:12px;font-weight:650}
 .turn-heading::after{content:"";height:1px;min-width:0;flex:1 1 0;align-self:center;background:var(--line)}
-.traffic{margin-top:10px}.traffic-header{display:flex;justify-content:space-between;flex-wrap:wrap;gap:5px 10px;align-items:baseline}.traffic-values{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.traffic-values div{border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:0}.traffic-values strong{display:block;overflow-wrap:anywhere}.traffic-history{margin-top:6px}.traffic-history p{margin:5px 0;overflow-wrap:anywhere}.turn-traffic{font-weight:500}
+.traffic-header{display:flex;justify-content:space-between;flex-wrap:wrap;gap:5px 10px;align-items:baseline}.traffic-values{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.traffic-values div{border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:0}.traffic-values strong{display:block;overflow-wrap:anywhere}.traffic-history{margin-top:6px}.traffic-history p{margin:5px 0;overflow-wrap:anywhere}.turn-traffic{font-weight:500}
 .turn-label{color:var(--ink);white-space:nowrap}
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,104px),1fr));gap:8px}
 .tile{display:grid;grid-template-rows:64px auto auto;align-content:start;gap:4px;min-width:0;padding:6px;background:var(--surface);border:1px solid var(--line);border-radius:10px;text-align:left}
@@ -31,6 +52,7 @@ main{max-width:1060px;margin:auto;padding:20px clamp(12px,3vw,32px) 24px}.headin
 .tile-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:var(--tint)}
 .tile-name{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere;font-size:12px;font-weight:650;line-height:1.25}
 .tile-source{font-size:10px;color:var(--muted);line-height:1.25}
+.policy-head,.grant-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.policy-head{justify-content:space-between}.grant-row input{min-width:0;flex:1 1 15ch}.policy-details{margin-top:8px}.policy-details summary{cursor:pointer}.policy-details form{margin:8px 0}.policy-head select,.grant-row input{background:var(--tint);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-height:30px}.policy-head select{max-width:100%}#policy-status{margin:8px 0 0}
 </style>
 </head>
 <body>
@@ -38,11 +60,30 @@ main{max-width:1060px;margin:auto;padding:20px clamp(12px,3vw,32px) 24px}.headin
   <header class="heading"><div class="mark" aria-hidden="true">▧</div><h1>上下文素材</h1><span id="connection" class="connection"><i class="dot"></i><span>连接中</span></span><button id="refresh" class="btn" type="button" title="刷新素材">刷新</button></header>
   <p id="status" class="notice" role="status" hidden></p>
   <section class="box" aria-label="会话设置">
-    <label class="stack session-field"><span>管理的会话</span><select id="session" aria-describedby="session-note"></select></label>
-    <p id="session-note" class="muted session-note" role="status"></p>
-    <div id="controls" hidden>
-    <form class="rename" id="rename"><input id="label" maxlength="100" placeholder="留空使用 Antigravity 会话标题" aria-label="自定义会话别名"><button class="btn" type="submit">保存别名</button></form>
+    <div class="session-row">
+      <label class="stack session-field"><span>管理的会话</span><select id="session" aria-describedby="session-note"></select></label>
+      <button id="delete-session" class="btn danger" type="button" hidden>删除归档</button>
     </div>
+    <p id="session-note" class="muted session-note" role="status"></p>
+    <form class="rename" id="rename" hidden><input id="label" maxlength="100" placeholder="留空使用 Antigravity 会话标题" aria-label="自定义会话别名"><button class="btn" type="submit">保存别名</button></form>
+  </section>
+  <section class="box" aria-label="素材读取模式">
+    <div class="policy-head"><h2><label for="media-mode">素材读取模式</label></h2>
+      <select id="media-mode" aria-describedby="mode-help" disabled>
+        <option value="save">省流模式</option><option value="native">原生模式</option>
+      </select>
+    </div>
+    <p id="mode-help" class="muted session-note">应用到所有主会话。省流模式将媒体交给子 Agent；原生模式允许主 Agent 直接读取。</p>
+    <details id="grant-details" class="policy-details">
+      <summary>临时放行指定素材</summary>
+      <p id="grant-help" class="muted session-note">只对当前打开的 Antigravity 主会话生效，5 分钟内允许一次原生读取。原件进入主上下文后，可能在后续推理中再次上传；撤销不会移除已读取的内容。</p>
+      <form id="grant-form" class="grant-row">
+        <input id="grant-path" aria-label="素材原件的绝对路径" aria-describedby="grant-help" maxlength="32767" placeholder="粘贴素材原件的绝对路径" required disabled>
+        <button id="grant-submit" class="btn" type="submit" disabled>放行一次</button>
+      </form>
+      <div class="policy-head"><span id="grant-state" class="muted" role="status"></span><button id="grant-revoke" class="btn" type="button" hidden>撤销放行</button></div>
+    </details>
+    <p id="policy-status" class="notice" role="status" hidden></p>
   </section>
   <section id="traffic" class="box traffic" aria-label="每轮上行流量" hidden>
     <div class="traffic-header"><h2>上行流量</h2><span id="traffic-turn" class="muted"></span></div>
@@ -50,7 +91,7 @@ main{max-width:1060px;margin:auto;padding:20px clamp(12px,3vw,32px) 24px}.headin
       <div><span class="muted">主 Agent</span><strong id="traffic-main">—</strong></div>
       <div><span class="muted">子 Agent</span><strong id="traffic-child">—</strong></div>
     </div>
-    <p id="traffic-note" class="muted session-note"></p>
+    <p id="traffic-note" class="muted session-note" role="status" hidden></p>
     <details id="traffic-history" class="muted traffic-history" hidden><summary>最近轮次（含纯文字）</summary><div id="traffic-list"></div></details>
   </section>
   <section id="library" hidden>
@@ -63,13 +104,31 @@ main{max-width:1060px;margin:auto;padding:20px clamp(12px,3vw,32px) 24px}.headin
   </section>
   <p id="empty" class="empty">正在读取本机素材库…</p>
 </main>
+<dialog id="delete-dialog" class="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-help">
+  <form method="dialog">
+    <h2 id="delete-title">删除 CAM 归档？</h2>
+    <p id="delete-name"></p>
+    <p id="delete-help" class="muted">只删除该会话在 CAM 中的素材引用、别名和流量记录。Antigravity 对话和素材原件不会被删除。</p>
+    <div class="delete-dialog-actions">
+      <button class="btn" value="cancel" autofocus>取消</button>
+      <button class="btn danger" value="delete">确认删除</button>
+    </div>
+  </form>
+</dialog>
 <script>
 "use strict";
 const CAPABILITY = "__CAM_PANEL_CAPABILITY__";
 const $ = id => document.getElementById(id);
 const pending = new Map();
 let nextId = 0;
-let host = {};
+let hostTheme;
+const osTheme = matchMedia("(prefers-color-scheme: dark)");
+const themeColors = [
+  "--sidebar-background", "--background", "--card", "--foreground", "--muted-foreground", "--border",
+  "--primary", "--secondary", "--sidebar-muted", "--primary-foreground", "--destructive",
+  "--color-background-primary", "--color-background-secondary", "--color-text-primary", "--color-text-secondary",
+  "--color-border-primary", "--color-ring-primary", "--color-text-inverse", "--color-text-danger",
+];
 let bridgeReady = false;
 const FOLLOW = "follow";
 const state = {
@@ -90,10 +149,21 @@ function request(method, params) {
     post({ id, method, params });
   });
 }
-function theme(context) {
-  host = { ...host, ...context };
-  document.documentElement.dataset.theme = host.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+function theme(context = {}) {
+  const root = document.documentElement;
+  const nextTheme = context.theme === "light" || context.theme === "dark" ? context.theme : hostTheme;
+  if (context.styles?.variables || nextTheme !== hostTheme) {
+    const variables = context.styles?.variables || {};
+    for (const name of themeColors) {
+      const value = variables[name];
+      if (typeof value === "string" && CSS.supports("color", value)) root.style.setProperty(name, value);
+      else root.style.removeProperty(name);
+    }
+  }
+  hostTheme = nextTheme;
+  root.dataset.theme = hostTheme || (osTheme.matches ? "dark" : "light");
 }
+osTheme.addEventListener("change", () => theme());
 window.addEventListener("message", event => {
   const msg = event.data;
   if (event.source !== window.parent || msg?.jsonrpc !== "2.0") return;
@@ -149,9 +219,7 @@ function currentSession() {
   const { status, key } = state.desktop;
   if (status === "library") return state.sessions[0];
   if (status !== "active") return undefined;
-  const linked = state.sessions.filter(item => item.desktopKey === key);
-  return linked.find(item => item.scope === key) || (linked.length === 1 ? linked[0] : undefined) ||
-    state.sessions.find(item => !item.desktopKey && item.scope === key);
+  return state.sessions.find(item => item.scope === key);
 }
 
 function renderSessions(current, changed) {
@@ -174,13 +242,14 @@ function renderSessions(current, changed) {
   select.title = current ? sessionName(current) : "";
   const hint = $("session-note");
   let message = "";
-  if (state.manualScope) message = `正在手动查看 · ${sessionName(current)}`;
+  if (state.manualScope && current) message = `正在手动查看 · ${sessionName(current)}`;
   else if (state.desktop.status === "active" && current) message = `当前会话 · ${sessionName(current)}`;
   else if (state.desktop.status === "library" && current) message = `全页素材库 · 最近归档 · ${sessionName(current)}`;
   if (hint.textContent !== message) hint.textContent = message;
   hint.hidden = !message;
 
-  for (const key of ["controls", "library", "traffic"]) $(key).hidden = !current;
+  for (const key of ["rename", "delete-session", "library", "traffic"]) $(key).hidden = !current;
+  $("delete-session").disabled = Boolean(deletingScope);
   $("empty").hidden = Boolean(current);
   if (!current) {
     const empty = $("empty");
@@ -260,6 +329,7 @@ async function syncDesktop() {
   if (!["active", "none", "library", "unavailable"].includes(next.status)) next = { status: "unavailable", key: null };
   if (next.status === state.desktop.status && next.key === state.desktop.key) return;
   const previous = currentSession();
+  $("grant-path").value = "";
   if (next.status === "active" || next.status === "none") {
     if (lastKnownDesktop && (lastKnownDesktop.status !== next.status || lastKnownDesktop.key !== next.key)) {
       state.manualScope = "";
@@ -267,6 +337,8 @@ async function syncDesktop() {
     lastKnownDesktop = next;
   }
   state.desktop = next;
+  renderPolicy();
+  void refreshPolicy();
   void syncView(previous);
   if (next.status === "active" && state.loaded && !currentSession()) void refresh({ entries: false, quiet: true });
 }
@@ -301,7 +373,6 @@ async function loadEntries(quiet = false) {
 }
 
 const thumbnailMimes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif"]);
-const sources = [[16, "子 Agent 读取"]];
 const thumbnailQueue = [];
 let loadingThumbnails = 0;
 function pumpThumbnails() {
@@ -348,9 +419,10 @@ function renderTraffic(data) {
     const turn = turns.find(item => `turn-${item.turn}` === node.id);
     node.querySelector(".turn-traffic").textContent = data.pending ? "" : turn ? trafficLine(turn) : "无上行采样";
   }
-  const tags = [...new Set([data.tag, latest?.main?.tag, latest?.child?.tag].filter(Boolean))];
-  $("traffic-note").textContent = data.pending ? "正在读取本机计数记录…" : data.error ? "无法读取本机统计。" :
-    `${data.enabled ? `V2Ray / Xray${tags.length ? ` · ${tags.join(" / ")}` : ""}` : "上行采样已禁用或配置无效"}。仅为模型调用时间窗内的共享出站估算，可能含后台流量。`;
+  const note = $("traffic-note");
+  note.textContent = data.pending ? "正在读取流量…" : data.error ? "无法读取本机统计。" :
+    data.enabled === false ? "上行采样已关闭或配置无效。" : "";
+  note.hidden = !note.textContent;
   $("traffic-history").hidden = turns.length < 2;
   $("traffic-list").replaceChildren(...turns.slice(1, 12).map(turn => text("p", `第 ${turn.turn} 轮 · ${trafficLine(turn)}`)));
 }
@@ -369,15 +441,15 @@ function groups(items, scope) {
   thumbnails.disconnect();
   const turns = new Map();
   for (const item of items) {
-    const key = item.turn ?? null;
+    const key = item.turn;
     if (!turns.has(key)) turns.set(key, []);
     turns.get(key).push(item);
   }
   return Array.from(turns, ([turn, files]) => {
     const section = text("section", "", "turn");
     const heading = text("h3", "", "turn-heading");
-    heading.append(text("span", turn === null ? "未记录轮次" : `第 ${turn} 轮`, "turn-label"));
-    heading.id = `turn-${turn ?? "unknown"}`;
+    heading.append(text("span", `第 ${turn} 轮`, "turn-label"));
+    heading.id = `turn-${turn}`;
     heading.append(text("span", "", "turn-traffic"));
     section.setAttribute("aria-labelledby", heading.id);
     const tiles = text("div", "", "tiles");
@@ -394,9 +466,8 @@ function tile(item, scope) {
   const extension = item.name?.match(/\.([a-z0-9]{1,5})$/i)?.[1];
   const icon = extension || ({ image: "IMG", video: "VID", audio: "AUD", document: "DOC" })[kind];
   const name = item.name || item.id;
-  const source = sources.filter(([flag]) => item.sources & flag).map(([, label]) => label).join(" · ");
   const control = button("", () => openTile(control, item, scope), "tile");
-  control.dataset.tileKey = `${item.turn ?? "unknown"}-${item.id}`;
+  control.dataset.tileKey = `${item.turn}-${item.id}`;
   control.title = `${name} · 用 Windows 默认应用打开`;
   control.setAttribute("aria-label", `打开 ${name}`);
   const cover = text("span", "", "tile-cover");
@@ -404,7 +475,7 @@ function tile(item, scope) {
   cover.setAttribute("aria-hidden", "true");
   cover.append(text("span", icon.toUpperCase(), "tile-icon"));
   control.append(cover, text("span", name, "tile-name"));
-  if (source) control.append(text("span", source, "tile-source"));
+  control.append(text("span", "子 Agent 读取", "tile-source"));
   if (thumbnailMimes.has(mime)) {
     cover.dataset.scope = scope;
     cover.dataset.id = item.id;
@@ -468,6 +539,38 @@ $("rename").addEventListener("submit", async event => {
     await refresh({ entries: false });
   } catch (error) { if (scope === state.scope) notice(error.message); }
 });
+const deleteDialog = $("delete-dialog");
+let deleteTarget, deletingScope;
+$("delete-session").addEventListener("click", () => {
+  const current = currentSession();
+  if (!current || deletingScope) return;
+  deleteTarget = current.scope;
+  $("delete-name").textContent = sessionName(current);
+  deleteDialog.showModal();
+});
+deleteDialog.querySelector("form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const scope = deleteTarget;
+  deleteTarget = undefined;
+  deleteDialog.close();
+  if (!scope || event.submitter?.value !== "delete" || deletingScope) return;
+  deletingScope = scope;
+  $("delete-session").disabled = true;
+  notice("");
+  try {
+    await call("delete_session", { scope });
+    ++state.refreshGeneration;
+    const previous = currentSession();
+    state.sessions = state.sessions.filter(item => item.scope !== scope);
+    await syncView(previous);
+    notice("已删除该会话的 CAM 归档。", true);
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    deletingScope = undefined;
+    $("delete-session").disabled = false;
+  }
+});
 let searchTimer;
 $("query").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.offset = 0; loadEntries(); }, 160); });
 $("previous").addEventListener("click", () => { state.offset = Math.max(0, state.offset - state.pageSize); loadEntries(); });
@@ -482,11 +585,78 @@ for (const [kind, title] of kinds) {
   item.setAttribute("aria-pressed", kind === "");
   $("filters").append(item);
 }
+let policy = null;
+let policyBusy = false;
+let policyGeneration = 0;
+function renderPolicy() {
+  const ready = !!policy && !policyBusy;
+  const mode = policy?.mode || "save";
+  const current = state.desktop.status === "active" && policy?.scope === state.desktop.key;
+  const expiry = current && policy.grantUntil > Date.now() / 1000 ? policy.grantUntil : null;
+  $("media-mode").value = mode;
+  $("media-mode").disabled = !ready;
+  $("mode-help").textContent = mode === "native"
+    ? "应用到所有主会话。原件可能进入主上下文并在后续推理中再次上传。"
+    : "应用到所有主会话。媒体交给子 Agent，主 Agent 只接收文字结果。";
+  $("grant-details").hidden = mode !== "save";
+  $("grant-path").disabled = $("grant-submit").disabled = !ready || !current;
+  $("grant-revoke").hidden = !expiry;
+  $("grant-revoke").disabled = !ready;
+  $("grant-state").textContent = !current ? "未检测到当前主会话；请打开对应原生对话。"
+    : expiry ? `放行待使用 · ${new Date(expiry * 1000).toLocaleTimeString("zh-CN")} 到期` : "没有待使用的放行。";
+}
+async function refreshPolicy(quiet = true) {
+  if (policyBusy) return;
+  const generation = ++policyGeneration;
+  try {
+    const next = await call("policy");
+    if (generation !== policyGeneration) return;
+    policy = next;
+    renderPolicy();
+  } catch (error) {
+    if (!quiet && generation === policyGeneration) notice(error.message, false, "policy-status");
+  }
+}
+async function changePolicy(action, params, message) {
+  if (policyBusy) return;
+  ++policyGeneration;
+  policyBusy = true;
+  renderPolicy();
+  notice("", false, "policy-status");
+  try {
+    const next = await call(action, params);
+    policy = next;
+    notice(message, true, "policy-status");
+    if (action === "grant") $("grant-path").value = "";
+  } catch (error) {
+    notice(error.message, false, "policy-status");
+  } finally {
+    policyBusy = false;
+    renderPolicy();
+    await refreshPolicy();
+  }
+}
+$("media-mode").addEventListener("change", () => {
+  const mode = $("media-mode").value;
+  void changePolicy("set_mode", { mode }, mode === "native"
+    ? "已切换到原生模式。此设置影响所有主会话。" : "已切换到省流模式。之前已读入的原件不会移除。");
+});
+$("grant-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const scope = state.desktop.key;
+  const path = $("grant-path").value.trim().replace(/^"(.*)"$/, "$1");
+  if (!scope || !path) return;
+  void changePolicy("grant", { scope, path }, "已授权。请在当前原生对话明确要求主 Agent 直接读取刚指定的绝对路径。");
+});
+$("grant-revoke").addEventListener("click", () => {
+  void changePolicy("revoke", { scope: state.desktop.key }, "已撤销尚未使用的放行。");
+});
+
 $("refresh").addEventListener("click", async () => {
   notice("");
   if (bridgeReady) {
     await syncDesktop();
-    await refresh();
+    await Promise.all([refresh(), refreshPolicy(false)]);
   } else await connect();
 });
 
@@ -500,14 +670,17 @@ async function connect() {
     post({ method: "ui/notifications/initialized" });
     bridgeReady = true;
     await syncDesktop();
-    await refresh();
+    await Promise.all([refresh(), refreshPolicy(false)]);
   } catch (error) { notice(error.message); }
   finally { initializing = false; }
 }
 theme({});
 connect();
 setInterval(() => { if (bridgeReady && !document.hidden) void syncDesktop(); }, 1000);
-setInterval(() => { if (bridgeReady && !document.hidden) void refresh({ entries: false, quiet: true }); }, 6000);
+setInterval(() => { if (bridgeReady && !document.hidden) {
+  void refresh({ entries: false, quiet: true });
+  void refreshPolicy();
+} }, 6000);
 document.addEventListener("visibilitychange", () => {
   if (bridgeReady && !document.hidden) void syncDesktop();
 });

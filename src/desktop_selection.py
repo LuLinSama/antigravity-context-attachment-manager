@@ -16,9 +16,6 @@ LIBRARY_ROUTE = "/view/mcp-app/antigravity-context-attachment-manager_media/cam_
 
 
 def desktop_target_file():
-    override = os.environ.get("AGY_BROWSER_ACTIVE_PORT_FILE")
-    if override:
-        return Path(override)
     if sys.platform == "win32":
         profile = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "Antigravity"
         return profile / "DevToolsActivePort"

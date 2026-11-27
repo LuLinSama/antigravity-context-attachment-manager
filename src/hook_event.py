@@ -33,8 +33,12 @@ def tool_call(event):
     return call.get("name"), args if isinstance(args, dict) else {}
 
 
+def file_arguments(args):
+    return tuple(args[key] for key in ("AbsolutePath", "Path", "path") if key in args)
+
+
 def file_argument(args):
-    return next((args[key] for key in ("AbsolutePath", "Path", "path") if key in args), None)
+    return next(iter(file_arguments(args)), None)
 
 
 def run_hook(handler, default=None, failure=None):
