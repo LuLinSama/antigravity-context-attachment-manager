@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from adapter import INLINE, READ, media_part
+from media import INLINE, READ, media_part
 from conversation_names import UUID, prompt_fingerprint
 
 
@@ -72,7 +72,7 @@ def backfill(archive, db, scope, conversation_id, gemini=None):
     rows = db.execute("""
         SELECT a.id, lower(a.mime), COALESCE((a.file_size + 2) / 3 * 4, length(a.payload)), EXISTS (
             SELECT 1 FROM turn_attachments u WHERE u.scope=a.scope AND u.id=a.id
-        ) FROM attachments a WHERE a.scope=?
+        ) FROM attachments a LEFT JOIN local_files l USING (scope, id) WHERE a.scope=? AND l.id IS NULL
     """, (scope,)).fetchall()
     if not any(not recorded for _, _, _, recorded in rows):
         return
@@ -127,7 +127,7 @@ def backfill(archive, db, scope, conversation_id, gemini=None):
                if len(records) == 1 and not records[0][1]}
     if not matches:
         return
-    # Take the write lock and re-check because the relay can record concurrently.
+    # Take the write lock and re-check because another local process can record concurrently.
     db.execute("BEGIN IMMEDIATE")
     if dict(db.execute("SELECT turn_key, number FROM turns WHERE scope=?", (scope,))) != known:
         return

@@ -1,64 +1,35 @@
-"""MCP tool results carry retrieval instructions for the local request proxy."""
+"""Stdio MCP Apps server for the local attachment library."""
 
 import json
+import sqlite3
 import sys
+from functools import lru_cache
+from pathlib import Path
 
 import panel
-from protocol import ATTACHMENT_ID, FETCH_TOOL, LIST_TOOL, MARKER
+from archive import Archive
+from native_state import data_dir
 
 
-TOOLS = [
-    {
-        "name": FETCH_TOOL,
-        "description": "Retrieve exactly one historical attachment by its CAM ID when its original media is needed.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"id": {"type": "string", "pattern": f"^{ATTACHMENT_ID.pattern}$"}},
-            "required": ["id"],
-            "additionalProperties": False,
-        },
-        "annotations": {"readOnlyHint": True, "openWorldHint": False},
-    },
-    {
-        "name": LIST_TOOL,
-        "description": "List archived attachment IDs and filenames in this conversation. Returns metadata only. Useful after compaction.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "maxLength": 120},
-                "offset": {"type": "integer", "minimum": 0},
-            },
-            "additionalProperties": False,
-        },
-        "annotations": {"readOnlyHint": True, "openWorldHint": False},
-    },
-]
 VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+MANIFEST = json.loads((Path(__file__).resolve().parents[1] / "plugin.json").read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=1)
+def archive():
+    return Archive(data_dir())
 
 
 def tool_result(name, args):
-    if name == panel.OPEN_PANEL:
+    # Antigravity enables the registered app entrypoint for iframe calls.
+    if name == panel.OPEN_PANEL and not args:
         return panel.result({"title": "上下文素材"})
-    if name == FETCH_TOOL:
-        attachment_id = args.get("id")
-        valid = isinstance(attachment_id, str) and ATTACHMENT_ID.fullmatch(attachment_id)
-        if valid:
-            return marker_result({"id": attachment_id})
-        message = "Provide a complete CAM attachment ID from this conversation."
-    elif name == LIST_TOOL:
-        query, offset = args.get("query", ""), args.get("offset", 0)
-        if isinstance(query, str) and len(query) <= 120 and type(offset) is int and 0 <= offset <= 1_000_000:
-            return marker_result({"query": query, "offset": offset})
-        message = "Provide a filename query of at most 120 characters and a valid offset."
-    else:
-        message = "Unknown attachment tool."
-    return {"content": [{"type": "text", "text": message}], "isError": True}
-
-
-def marker_result(args):
-    message = MARKER + json.dumps(args, ensure_ascii=True, separators=(",", ":"))
-    message += "\nAwaiting the local attachment proxy. If this text is visible, check the connection in the Context Attachments panel."
-    return {"content": [{"type": "text", "text": message}]}
+    if name == panel.OPEN_PANEL and panel.authorized(args):
+        try:
+            return panel.result(panel.run(archive(), args))
+        except (OSError, sqlite3.Error):
+            return panel.result({"error": "无法打开本机素材库。"})
+    return panel.result({"error": "此操作只能从上下文素材面板调用。"})
 
 
 def dispatch(message):
@@ -75,12 +46,12 @@ def dispatch(message):
         result = {
             "protocolVersion": version if isinstance(version, str) and version in VERSIONS else "2025-11-25",
             "capabilities": {"tools": {}, "resources": {}},
-            "serverInfo": {"name": "antigravity-context-attachment-manager", "version": "0.3.3"},
+            "serverInfo": {"name": MANIFEST["name"], "version": MANIFEST["version"]},
         }
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        result = {"tools": TOOLS + panel.PANEL_TOOLS}
+        result = {"tools": panel.PANEL_TOOLS}
     elif method == "resources/list":
         result = {"resources": [panel.RESOURCE]}
     elif method == "resources/templates/list":

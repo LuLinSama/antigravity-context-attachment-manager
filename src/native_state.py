@@ -1,9 +1,8 @@
-"""Per-user settings shared by the native sidecar and MCP Apps resource."""
+"""Locate per-user archives and read local desktop metadata."""
 
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 
@@ -26,23 +25,3 @@ def read_state(path):
     except (OSError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
-
-
-def write_state(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        try:
-            json.dump(value, stream)
-            stream.close()
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-
-def exclude_loopback():
-    entries = [value.strip() for value in os.environ.get("NO_PROXY", "").split(",") if value.strip()]
-    for host in ("localhost", "127.0.0.1", "::1"):
-        if host not in entries:
-            entries.append(host)
-    os.environ["NO_PROXY"] = ",".join(entries)

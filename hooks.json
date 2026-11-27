@@ -1,0 +1,17 @@
+{
+  "cam-file-reads": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "^(view_file|read_file)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ./scripts/record_read.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

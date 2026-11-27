@@ -2,11 +2,7 @@
   "mcpServers": {
     "media": {
       "command": "python",
-      "args": ["-u", "${PLUGIN_ROOT}/src/mcp_server.py"],
-      "tools": {
-        "cam_fetch": {"eager": true},
-        "cam_list": {"eager": true}
-      }
+      "args": ["-u", "${PLUGIN_ROOT}/src/mcp_server.py"]
     }
   }
 }

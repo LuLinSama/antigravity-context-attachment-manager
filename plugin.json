@@ -2,6 +2,6 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "antigravity-context-attachment-manager",
   "displayName": "Context Attachment Manager",
-  "description": "Browse and manage historical media in Antigravity, and send originals only when needed.",
-  "version": "0.3.6"
+  "description": "Browse files read by Antigravity and open them in Windows.",
+  "version": "0.4.0"
 }

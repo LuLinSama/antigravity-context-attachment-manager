@@ -1,7 +1,0 @@
-{
-  "command": "python",
-  "args": ["../../src/native_startup.py"],
-  "display_name": "上下文素材启动服务",
-  "description": "由 Antigravity 启动的本地附件服务。",
-  "restart_policy": "on-failure"
-}

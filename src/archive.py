@@ -10,28 +10,11 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from adapter import INLINE, media_part
+from conversation_names import fingerprint
+from media import EXTENSIONS, INLINE, READ, media_part
 
 
 PAGE_SIZE = 20
-# Choose the Windows association from the archived MIME, never from a user filename.
-EXTENSIONS = {
-    "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp",
-    "image/bmp": ".bmp", "image/tiff": ".tif", "image/heic": ".heic", "image/avif": ".avif",
-    "video/mp4": ".mp4", "video/mpeg": ".mpeg", "video/webm": ".webm", "video/quicktime": ".mov",
-    "video/x-matroska": ".mkv", "video/x-msvideo": ".avi", "video/x-ms-wmv": ".wmv",
-    "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
-    "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
-    "audio/flac": ".flac", "audio/x-flac": ".flac", "audio/webm": ".webm",
-    "application/pdf": ".pdf", "application/msword": ".doc", "application/vnd.ms-excel": ".xls",
-    "application/vnd.ms-powerpoint": ".ppt", "application/rtf": ".rtf", "text/rtf": ".rtf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-    "application/vnd.oasis.opendocument.text": ".odt", "application/vnd.oasis.opendocument.spreadsheet": ".ods",
-    "application/vnd.oasis.opendocument.presentation": ".odp",
-    "text/plain": ".txt", "text/markdown": ".md", "text/csv": ".csv",
-}
 
 
 def json_bytes(value):
@@ -79,6 +62,10 @@ class Archive:
                     scope TEXT NOT NULL, turn_key TEXT NOT NULL, number INTEGER NOT NULL,
                     PRIMARY KEY (scope, turn_key), UNIQUE (scope, number)
                 );
+                CREATE TABLE IF NOT EXISTS local_files (
+                    scope TEXT NOT NULL, id TEXT NOT NULL, path TEXT NOT NULL,
+                    PRIMARY KEY (scope, id)
+                );
                 CREATE TABLE IF NOT EXISTS turn_traffic (
                     scope TEXT NOT NULL, turn_key TEXT NOT NULL,
                     received INTEGER NOT NULL, forwarded INTEGER NOT NULL,
@@ -90,7 +77,6 @@ class Archive:
                 );
                 CREATE INDEX IF NOT EXISTS turn_attachments_by_file ON turn_attachments(scope, id);
                 INSERT OR IGNORE INTO sessions(scope) SELECT DISTINCT scope FROM attachments;
-                UPDATE sessions SET mode='auto' WHERE mode='manual';
             """)
             columns = {column[1] for column in db.execute("PRAGMA table_info(sessions)")}
             if "active_turn_key" not in columns:
@@ -167,21 +153,6 @@ class Archive:
         """, (*stored, scope, attachment_id))
         return stored[1]
 
-    def save(self, db, scope, name, mime, part):
-        payload = json.dumps(part, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
-        identity = hashlib.sha256(payload).hexdigest()[:32]
-        attachment_id = "CAM-" + identity
-        row = db.execute("SELECT name FROM attachments WHERE scope = ? AND id = ?", (scope, attachment_id)).fetchone()
-        if row is not None:
-            return attachment_id, row[0]
-        stored = self.store_inline(mime, part) or (payload, None, None)
-        db.execute("""
-            INSERT OR IGNORE INTO attachments (scope, id, name, mime, payload, file_digest, file_size)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (scope, attachment_id, name, mime, *stored))
-        row = db.execute("SELECT name FROM attachments WHERE scope = ? AND id = ?", (scope, attachment_id)).fetchone()
-        return attachment_id, row[0]
-
     def load(self, db, scope, attachment_id):
         row = db.execute("""
             SELECT name, mime, payload, file_digest, file_size FROM attachments WHERE scope=? AND id=?
@@ -204,57 +175,30 @@ class Archive:
             part[key]["data"] = base64.b64encode(original).decode("ascii")
         return name, mime, part
 
-    @staticmethod
-    def list(db, scope, query, offset):
-        page_size = 25
-        rows = db.execute("""
-            SELECT id, name, mime FROM attachments
-            WHERE scope = ? AND instr(lower(name || ' ' || id || ' ' || mime), lower(?)) > 0
-            ORDER BY rowid DESC LIMIT ? OFFSET ?
-        """, (scope, query, page_size + 1, offset)).fetchall()
-        return {
-            "attachments": [{"id": row[0], "name": row[1], "mimeType": row[2]} for row in rows[:page_size]],
-            "nextOffset": offset + page_size if len(rows) > page_size else None,
-        }
-
-    @staticmethod
-    def observe(db, scope, turn, prompt_fingerprint=None, *, active_turn_key=None):
-        db.execute("""
-            INSERT INTO sessions(scope, turn, updated, active_turn_key) VALUES (?, ?, ?, ?)
-            ON CONFLICT(scope) DO UPDATE SET turn=excluded.turn, updated=excluded.updated,
-                active_turn_key=COALESCE(excluded.active_turn_key, sessions.active_turn_key)
-        """, (scope, turn, int(time.time()), active_turn_key))
-        if prompt_fingerprint is not None:
-            db.execute("""
-                INSERT INTO session_names(scope, prompt_fingerprint) VALUES (?, ?)
-                ON CONFLICT(scope) DO UPDATE SET prompt_fingerprint=excluded.prompt_fingerprint
-                WHERE conversation_id IS NULL AND prompt_fingerprint IS NOT excluded.prompt_fingerprint
-            """, (scope, prompt_fingerprint))
-        return db.execute("SELECT mode FROM sessions WHERE scope = ?", (scope,)).fetchone()[0]
-
-    def record_forward(self, scope, received, forwarded, report):
+    def record_local_read(self, conversation_id, path, mime, turn, updated):
+        scope = fingerprint(conversation_id)
+        attachment_id = "CAM-" + fingerprint("local:" + os.path.normcase(str(path)))[:32]
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM sessions WHERE scope=?", (scope,)).fetchone():
+                linked = db.execute("SELECT scope FROM session_names WHERE lower(conversation_id)=? LIMIT 2",
+                                    (conversation_id,)).fetchall()
+                if len(linked) == 1:
+                    scope = linked[0][0]
             db.execute("""
-                UPDATE sessions SET received=?, forwarded=?, omitted=?, restored=?, requests=requests+1,
-                total_received=total_received+?, total_forwarded=total_forwarded+? WHERE scope=?
-            """, (received, forwarded, report.omitted, report.restored, received, forwarded, scope))
-            if report.turn_key is not None:
-                db.execute("""
-                    INSERT INTO turn_traffic(scope, turn_key, received, forwarded) VALUES (?, ?, ?, ?)
-                    ON CONFLICT(scope, turn_key) DO UPDATE SET
-                        received=turn_traffic.received+excluded.received,
-                        forwarded=turn_traffic.forwarded+excluded.forwarded
-                """, (scope, report.turn_key, received, forwarded))
-
-    @staticmethod
-    def observe_turns(db, scope, turn_keys):
-        known = dict(db.execute("SELECT turn_key, number FROM turns WHERE scope=?", (scope,)))
-        number = max(known.values(), default=0)
-        for turn_key in turn_keys:
-            if turn_key not in known:
-                number += 1
-                db.execute("INSERT INTO turns VALUES (?, ?, ?)", (scope, turn_key, number))
-                known[turn_key] = number
+                INSERT INTO sessions(scope, updated) VALUES (?, ?)
+                ON CONFLICT(scope) DO UPDATE SET updated=MAX(updated, excluded.updated)
+            """, (scope, updated))
+            self.link_conversations(db, {scope: conversation_id})
+            db.execute("""
+                INSERT OR IGNORE INTO attachments(scope, id, name, mime, payload) VALUES (?, ?, ?, ?, X'7B7D')
+            """, (scope, attachment_id, path.name, mime))
+            db.execute("INSERT OR IGNORE INTO local_files VALUES (?, ?, ?)", (scope, attachment_id, str(path)))
+            if turn is not None:
+                number, key = turn
+                db.execute("INSERT OR IGNORE INTO turns VALUES (?, ?, ?)", (scope, key, number))
+                if db.execute("SELECT number FROM turns WHERE scope=? AND turn_key=?", (scope, key)).fetchone() == (number,):
+                    self.record_occurrence(db, scope, key, attachment_id, READ)
 
     @staticmethod
     def record_occurrence(db, scope, turn_key, attachment_id, source):
@@ -271,14 +215,12 @@ class Archive:
         db.row_factory = sqlite3.Row
         try:
             return [dict(row) for row in db.execute("""
-                SELECT s.scope, label, mode, updated, received, forwarded, omitted, restored, requests, s.turn,
+                SELECT s.scope, label, updated, s.turn,
                        n.prompt_fingerprint AS promptFingerprint, n.conversation_id AS conversationId,
-                       total_received AS totalReceived, total_forwarded AS totalForwarded,
-                       COALESCE(active.number, (SELECT MAX(number) FROM turns WHERE scope=s.scope)) AS currentTurn,
+                       (SELECT COUNT(*) FROM turn_attachments u WHERE u.scope=s.scope) AS occurrences,
                        (SELECT COUNT(*) FROM attachments a WHERE a.scope=s.scope) AS count,
                        (SELECT name FROM attachments a WHERE a.scope=s.scope AND name<>'' ORDER BY a.rowid DESC LIMIT 1) AS sample
                 FROM sessions s LEFT JOIN session_names n USING (scope)
-                LEFT JOIN turns active ON active.scope=s.scope AND active.turn_key=s.active_turn_key
                 ORDER BY updated DESC, s.scope
             """)]
         finally:
@@ -296,20 +238,15 @@ class Archive:
     def entries(db, scope, query, kind, offset):
         any_kind = {"image": "image/%", "video": "video/%", "audio": "audio/%"}
         rows = db.execute("""
-            SELECT a.id, a.name, a.mime, t.number, COALESCE(u.sources,0), traffic.received, traffic.forwarded
+            SELECT a.id, a.name, a.mime, t.number, COALESCE(u.sources,CASE WHEN l.id IS NULL THEN 0 ELSE 2 END)
             FROM attachments a LEFT JOIN attachment_options o USING (scope, id)
+            LEFT JOIN local_files l USING (scope, id)
             LEFT JOIN turn_attachments u USING (scope, id) LEFT JOIN turns t USING (scope, turn_key)
-            LEFT JOIN turn_traffic traffic ON traffic.scope=t.scope AND traffic.turn_key=t.turn_key
             WHERE a.scope=? AND a.mime LIKE ? AND (?<>'document' OR a.mime LIKE 'application/%' OR a.mime LIKE 'text/%')
                   AND instr(lower(a.name || ' ' || a.id || ' ' || a.mime || ' ' ||
                   COALESCE(o.note,'') || ' ' || COALESCE(o.collection,'')), lower(?))>0
             ORDER BY t.number DESC, a.rowid DESC LIMIT ? OFFSET ?
         """, (scope, any_kind.get(kind, '%'), kind, query, PAGE_SIZE + 1, offset)).fetchall()
-        fields = ("id", "name", "mimeType", "turn", "sources", "turnReceived", "turnForwarded")
+        fields = ("id", "name", "mimeType", "turn", "sources")
         return {"attachments": [dict(zip(fields, row)) for row in rows[:PAGE_SIZE]],
                 "nextOffset": offset + PAGE_SIZE if len(rows) > PAGE_SIZE else None}
-
-    @staticmethod
-    def set_session(db, scope, mode, label):
-        db.execute("UPDATE sessions SET mode=?, label=? WHERE scope=?", (mode, label, scope))
-

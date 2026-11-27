@@ -1,18 +1,19 @@
 """Local tools for the Antigravity MCP Apps panel."""
 
+import base64
+import hmac
 import os
 import re
+import secrets
 import sqlite3
 import stat
 from pathlib import Path
 
-from adapter import INLINE, media_part
-from archive import EXTENSIONS, PAGE_SIZE
+from archive import PAGE_SIZE
 from conversation_names import UUID, desktop_names, fingerprint
 from desktop_selection import desktop_selection, public_selection
-from native_state import data_dir, read_state
 from legacy_timeline import backfill
-from protocol import ATTACHMENT_ID
+from media import EXTENSIONS, INLINE, MIME_BY_EXTENSION, local_path, media_part
 
 
 URI = "ui://antigravity-context-attachment-manager/attachments.html"
@@ -20,14 +21,20 @@ HTML = Path(__file__).resolve().parents[1] / "ui" / "attachments.html"
 RESOURCE = {"uri": URI, "name": "上下文素材", "mimeType": "text/html;profile=mcp-app"}
 OPEN_PANEL = "cam_open_panel"
 MAX_THUMBNAIL = 512 * 1024
-MODES = {"auto", "paused"}
+CAPABILITY = secrets.token_hex(32)
+ATTACHMENT_ID = re.compile(r"CAM-[0-9a-f]{32}")
 THUMBNAIL_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif"}
 
 PANEL_TOOLS = [
     {
         "name": OPEN_PANEL,
         "description": "打开上下文素材管理面板。",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string"}, "capability": {"type": "string"},
+            "scope": {"type": "string"}, "id": {"type": "string"},
+            "query": {"type": "string"}, "kind": {"type": "string"},
+            "offset": {"type": "integer"}, "label": {"type": "string"},
+        }, "additionalProperties": False},
         "_meta": {
             "ui": {"resourceUri": URI, "visibility": ["app"]},
             "com.google.antigravity/ui": {"entrypoints": [
@@ -40,11 +47,14 @@ PANEL_TOOLS = [
 
 
 def contents():
-    endpoint = os.environ.get("AGY_CAM_PANEL_URL") or read_state(data_dir() / "native-panel.json").get("url", "")
-    match = re.fullmatch(r"(http://127\.0\.0\.1:\d{1,5})/panel-[A-Za-z0-9_-]{32}", endpoint) if isinstance(endpoint, str) else None
-    metadata = {"csp": {"connectDomains": [match[1]]}} if match else {}
-    html = HTML.read_text(encoding="utf-8").replace("__CAM_PANEL_URL__", endpoint if match else "")
-    return {"contents": [{**RESOURCE, "text": html, "_meta": {"ui": metadata}}]}
+    html = HTML.read_text(encoding="utf-8").replace("__CAM_PANEL_CAPABILITY__", CAPABILITY)
+    return {"contents": [{**RESOURCE, "text": html}]}
+
+
+def authorized(args):
+    token = args.get("capability")
+    return (isinstance(token, str) and len(token) == len(CAPABILITY) and token.isascii()
+            and hmac.compare_digest(token, CAPABILITY))
 
 
 def result(payload):
@@ -52,9 +62,7 @@ def result(payload):
             "structuredContent": payload, "isError": "error" in payload}
 
 
-def run(archive, args, routed=True):
-    if archive is None:
-        return {"online": False, "sessions": []}
+def run(archive, args):
     try:
         action = args.get("action")
         if action == "selection":
@@ -74,10 +82,10 @@ def run(archive, args, routed=True):
                 for key in ("turn", "promptFingerprint", "conversationId"):
                     session.pop(key, None)
                 session.update(names.get(session["scope"], {}))
-            return {"online": True, "routed": routed, "sessions": sessions}
+            return {"online": True, "sessions": sessions}
         with archive.connect() as db:
             return apply_action(archive, db, action, args)
-    except (OSError, sqlite3.Error, ValueError):
+    except (OSError, sqlite3.Error, ValueError, RuntimeError):
         return {"error": "无法读取本机素材库，请重试。"}
 
 
@@ -85,7 +93,7 @@ def apply_action(archive, db, action, args):
     scope = args.get("scope")
     if not isinstance(scope, str) or not re.fullmatch(r"[0-9a-f]{64}", scope):
         return {"error": "请选择一个会话。"}
-    session = db.execute("SELECT mode, label FROM sessions WHERE scope=?", (scope,)).fetchone()
+    session = db.execute("SELECT 1 FROM sessions WHERE scope=?", (scope,)).fetchone()
     if session is None:
         return {"error": "这个会话已无法读取，请刷新。"}
     if action == "entries":
@@ -96,12 +104,18 @@ def apply_action(archive, db, action, args):
                 backfill(archive, db, scope, linked[0])
             return archive.entries(db, scope, query, kind, offset) | {"pageSize": PAGE_SIZE}
     if action == "session":
-        mode, label = args.get("mode", session[0]), args.get("label", session[1])
-        if isinstance(mode, str) and mode in MODES and isinstance(label, str) and len(label) <= 100:
-            archive.set_session(db, scope, mode, label.strip())
+        label = args.get("label")
+        if isinstance(label, str) and len(label) <= 100:
+            db.execute("UPDATE sessions SET label=? WHERE scope=?", (label.strip(), scope))
             return {"ok": True}
     attachment_id = args.get("id")
     if isinstance(attachment_id, str) and ATTACHMENT_ID.fullmatch(attachment_id):
+        local = db.execute("""
+            SELECT l.path, a.mime FROM local_files l JOIN attachments a USING (scope, id)
+            WHERE l.scope=? AND l.id=?
+        """, (scope, attachment_id)).fetchone()
+        if local is not None and action in ("open", "thumbnail"):
+            return local_preview(*local, action)
         if action == "open":
             return open_attachment(archive, db, scope, attachment_id)
         if action == "thumbnail":
@@ -118,6 +132,26 @@ def apply_action(archive, db, action, args):
             record = archive.load(db, scope, attachment_id)
             return thumbnail(record) if record else {"available": False}
     return {"error": "素材操作无效，或素材已不在该会话的档案中。"}
+
+
+def local_preview(value, mime, action):
+    path = local_path(value)
+    # Accept the same canonical path and an explicitly supported association.
+    if (path is None or MIME_BY_EXTENSION.get(path.suffix.lower()) != mime
+            or not path.is_file() or path.resolve() != path):
+        return {"available": False} if action == "thumbnail" else {"error": "所引用的原文件已移动或删除。"}
+    if action == "open":
+        if not hasattr(os, "startfile"):
+            return {"error": "此功能需要 Windows 默认应用。"}
+        os.startfile(str(path))
+        return {"ok": True}
+    if mime not in THUMBNAIL_MIMES or path.stat().st_size > MAX_THUMBNAIL:
+        return {"available": False}
+    with path.open("rb") as stream:
+        data = stream.read(MAX_THUMBNAIL + 1)
+    if not data or len(data) > MAX_THUMBNAIL:
+        return {"available": False}
+    return {"available": True, "mimeType": mime, "data": base64.b64encode(data).decode("ascii")}
 
 
 def thumbnail(record):
