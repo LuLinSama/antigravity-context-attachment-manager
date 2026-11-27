@@ -10,7 +10,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $pluginName = 'antigravity-context-attachment-manager'
-$files = @('plugin.json', 'mcp_config.json', 'README.md', 'rules\AGENTS.md', 'src\mcp_server.py', 'src\protocol.py', 'src\archive.py', 'src\adapter.py', 'src\panel.py', 'src\native_state.py', 'src\conversation_names.py', 'src\desktop_selection.py', 'src\legacy_timeline.py', 'ui\attachments.html')
+$files = @('plugin.json', 'mcp_config.json', 'README.md', 'LICENSE', 'rules\AGENTS.md', 'src\mcp_server.py', 'src\protocol.py', 'src\archive.py', 'src\adapter.py', 'src\panel.py', 'src\native_state.py', 'src\conversation_names.py', 'src\desktop_selection.py', 'src\legacy_timeline.py', 'ui\attachments.html')
 
 if ($Global) {
     $configRoot = Join-Path $env:USERPROFILE '.gemini\config'

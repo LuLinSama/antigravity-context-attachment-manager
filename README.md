@@ -73,9 +73,9 @@ python -m unittest discover -s tests -v
 
 桌面回归可以用一个新会话完成。先上传测试图片，再让 Antigravity 用 `read_file` 读取测试 MP4。发送纯文字追问，检查「本次节省」和「恢复 0 项」。然后要求按编号取回 MP4，确认恢复数增加。执行 `/compact` 后，可以再按文件名查找并取回图片。
 
-## 项目贡献者
+## 许可证
 
-- [LuLinSama](https://github.com/LuLinSama)
+本项目采用 [MIT 许可证](LICENSE)。
 
 ## 参考资料
 
